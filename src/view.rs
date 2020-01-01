@@ -145,11 +145,12 @@ impl TmuxView {
             ])
             .status();
 
-        // Format: "agent-id · command [labels]"
+        // Format: "agent-id command [labels]"
+        // Agent name in orange (#fab387), rest in default color
         // Uses @agent_id, @agent_command, @agent_labels pane options
         #[allow(clippy::literal_string_with_formatting_args)]
         let border_format =
-            "#{?pane_active,#[reverse],} #{@agent_id}#{?#{@agent_command}, · #{@agent_command},}#{?#{@agent_labels}, [#{@agent_labels}],} #[default]";
+            "#{?pane_active,#[reverse],}#[fg=#fab387] #{@agent_id} #[default]#{?#{@agent_command}, #{@agent_command},}#{?#{@agent_labels}, [#{@agent_labels}],} ";
         let _ = Command::new("tmux")
             .args([
                 "set-option", "-w", "-t", &session_window,
