@@ -404,6 +404,12 @@ async fn handle_request(
                         .as_millis() as u64;
                     let started_at = now_millis.saturating_sub(elapsed.as_millis() as u64);
 
+                    let rss_bytes = if agent.is_running() {
+                        get_process_tree_rss(agent.pid())
+                    } else {
+                        None
+                    };
+
                     AgentInfo {
                         id: agent.id.clone(),
                         pid: agent.pid(),
@@ -419,6 +425,7 @@ async fn handle_request(
                         exit_reason: agent.exit_reason,
                         limits: agent.limits,
                         no_resize: agent.no_resize,
+                        rss_bytes,
                     }
                 })
                 .collect();
@@ -675,14 +682,8 @@ async fn handle_request(
                 if let Err(e) = agent.pty.resize(rows, cols) {
                     return Response::error(format!("resize failed: {e}"));
                 }
-                // Update the screen model — resize creates a fresh parser,
-                // so replay transcript to restore screen state
+                // Update the screen model
                 agent.screen.resize(rows, cols);
-                if !clear_transcript {
-                    for entry in agent.transcript.all() {
-                        agent.screen.process(&entry.data);
-                    }
-                }
                 // Optionally clear transcript (useful for view mode to avoid
                 // displaying output rendered at old size)
                 if clear_transcript {
@@ -714,6 +715,24 @@ async fn handle_request(
                     Response::Recording {
                         agent_id: id,
                         commands: agent.recorded_commands.clone(),
+                    }
+                }
+            } else {
+                Response::error(format!("agent not found: {id}"))
+            }
+        }
+
+        Request::GetEnv { id } => {
+            let mgr = manager.lock().await;
+            if let Some(agent) = mgr.get(&id) {
+                if !agent.is_running() {
+                    Response::error(format!("agent {id} has exited — environment no longer available"))
+                } else {
+                    let pid = agent.pid();
+                    drop(mgr); // Release lock before I/O
+                    match read_proc_environ(pid) {
+                        Ok(env) => Response::AgentEnv { id, env },
+                        Err(e) => Response::error(format!("failed to read environment for {id}: {e}")),
                     }
                 }
             } else {
@@ -1137,6 +1156,62 @@ async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast:
             }
         }
     }
+}
+
+/// Read /proc/<pid>/environ and return parsed key-value pairs.
+fn read_proc_environ(pid: u32) -> Result<Vec<(String, String)>, std::io::Error> {
+    let path = format!("/proc/{pid}/environ");
+    let data = std::fs::read(&path)?;
+    let mut env = Vec::new();
+    for entry in data.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let s = String::from_utf8_lossy(entry);
+        if let Some((key, value)) = s.split_once('=') {
+            env.push((key.to_string(), value.to_string()));
+        }
+    }
+    env.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(env)
+}
+
+/// Get the total RSS (resident set size) in bytes for a process and all its descendants.
+/// Walks /proc/<pid>/task/*/children recursively.
+fn get_process_tree_rss(pid: u32) -> Option<u64> {
+    let mut total_rss: u64 = 0;
+    let mut stack = vec![pid];
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+
+    while let Some(p) = stack.pop() {
+        // Read RSS from /proc/<pid>/stat (field 24, 0-indexed 23)
+        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{p}/stat")) {
+            // Fields after comm (which may contain spaces/parens) start after the last ')'
+            if let Some(after_comm) = stat.rfind(')') {
+                let fields: Vec<&str> = stat[after_comm + 2..].split_whitespace().collect();
+                // RSS is field index 21 after the comm section (field 24 overall, minus pid/comm/state = index 21)
+                if let Some(rss_pages) = fields.get(21).and_then(|s| s.parse::<u64>().ok()) {
+                    total_rss += rss_pages * page_size;
+                }
+            }
+        }
+        // Find children via /proc/<pid>/task/*/children
+        let task_path = format!("/proc/{p}/task");
+        if let Ok(tasks) = std::fs::read_dir(&task_path) {
+            for task in tasks.flatten() {
+                let children_path = task.path().join("children");
+                if let Ok(children) = std::fs::read_to_string(&children_path) {
+                    for child_pid in children.split_whitespace() {
+                        if let Ok(cpid) = child_pid.parse::<u32>() {
+                            stack.push(cpid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if total_rss > 0 { Some(total_rss) } else { None }
 }
 
 /// Check if a server is running by trying to connect.

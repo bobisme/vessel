@@ -111,6 +111,22 @@ fn compute_delay(prev_ms: u64, curr_ms: u64) -> f64 {
     secs.clamp(0.1, 2.0)
 }
 
+/// Format bytes into human-readable string (e.g., "142M", "1.2G").
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    const GB: u64 = 1024 * MB;
+    if bytes >= GB {
+        format!("{:.1}G", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{}M", bytes / MB)
+    } else if bytes >= KB {
+        format!("{}K", bytes / KB)
+    } else {
+        format!("{bytes}B")
+    }
+}
+
 /// Generate an executable bash test script from a sequence of recorded commands.
 fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String {
     use std::fmt::Write;
@@ -505,6 +521,9 @@ async fn run_client(
                                 if a.no_resize {
                                     obj["no_resize"] = serde_json::json!(true);
                                 }
+                                if let Some(rss) = a.rss_bytes {
+                                    obj["rss_bytes"] = serde_json::json!(rss);
+                                }
                                 obj
                             })
                             .collect()
@@ -555,7 +574,14 @@ async fn run_client(
                                     println!("(no agents currently active)");
                                 }
                             } else {
-                                println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATE", "COMMAND");
+                                // Check if any agent has RSS data
+                                let has_rss = agents.iter().any(|a| a.rss_bytes.is_some());
+                                if has_rss {
+                                    println!("{:<20} {:<8} {:<10} {:<8} {}", "ID", "PID", "STATE", "RSS", "COMMAND");
+                                } else {
+                                    println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATE", "COMMAND");
+                                }
+                                let mut total_rss: u64 = 0;
                                 for a in &agents {
                                     let state = match a.state {
                                         botty::AgentState::Running => "running",
@@ -567,7 +593,21 @@ async fn run_client(
                                     } else {
                                         format!(" [{}]", a.labels.join(","))
                                     };
-                                    println!("{:<20} {:<8} {:<10} {}{}", a.id, a.pid, state, cmd, labels);
+                                    if has_rss {
+                                        let rss_str = match a.rss_bytes {
+                                            Some(bytes) => {
+                                                total_rss += bytes;
+                                                format_bytes(bytes)
+                                            }
+                                            None => "-".to_string(),
+                                        };
+                                        println!("{:<20} {:<8} {:<10} {:<8} {}{}", a.id, a.pid, state, rss_str, cmd, labels);
+                                    } else {
+                                        println!("{:<20} {:<8} {:<10} {}{}", a.id, a.pid, state, cmd, labels);
+                                    }
+                                }
+                                if has_rss && agents.len() > 1 {
+                                    println!("{:<20} {:<8} {:<10} {:<8}", "", "", "TOTAL", format_bytes(total_rss));
                                 }
                             }
                         }
@@ -1060,6 +1100,41 @@ async fn run_client(
                 Response::Recording { agent_id, commands } => {
                     let script = generate_test_script(&agent_id, &commands);
                     print!("{script}");
+                }
+                Response::Error { message } => {
+                    return Err(message.into());
+                }
+                _ => {
+                    return Err("unexpected response".into());
+                }
+            }
+        }
+
+        Command::Env { id, format, json } => {
+            let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+            let request = Request::GetEnv { id: id.clone() };
+            let response = client.request(request).await?;
+
+            match response {
+                Response::AgentEnv { id: agent_id, env } => {
+                    match fmt {
+                        OutputFormat::Json => {
+                            let map: serde_json::Map<String, serde_json::Value> = env.iter()
+                                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                                .collect();
+                            let envelope = json_envelope("agent_env", json!({
+                                "id": agent_id,
+                                "env": map,
+                                "count": env.len(),
+                            }), vec![]);
+                            println!("{}", serde_json::to_string(&envelope)?);
+                        }
+                        _ => {
+                            for (key, value) in &env {
+                                println!("{key}={value}");
+                            }
+                        }
+                    }
                 }
                 Response::Error { message } => {
                     return Err(message.into());

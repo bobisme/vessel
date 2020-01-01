@@ -217,6 +217,12 @@ pub enum Request {
         /// Agent ID.
         id: String,
     },
+
+    /// Get the runtime environment of an agent.
+    GetEnv {
+        /// Agent ID.
+        id: String,
+    },
 }
 
 /// Information about a single agent.
@@ -248,6 +254,10 @@ pub struct AgentInfo {
     /// Whether this agent is immune to auto-resize.
     #[serde(default)]
     pub no_resize: bool,
+    /// Resident set size in bytes (agent + child process tree).
+    /// None if the process has exited or RSS couldn't be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rss_bytes: Option<u64>,
 }
 
 /// Why an agent exited.
@@ -385,6 +395,14 @@ pub enum Response {
         agent_id: String,
         /// The recorded commands.
         commands: Vec<RecordedCommand>,
+    },
+
+    /// Agent runtime environment.
+    AgentEnv {
+        /// The agent ID.
+        id: String,
+        /// Environment variables (key=value pairs).
+        env: Vec<(String, String)>,
     },
 }
 
@@ -548,6 +566,9 @@ mod tests {
             Request::GetRecording {
                 id: "test-agent".into(),
             },
+            Request::GetEnv {
+                id: "test-agent".into(),
+            },
         ];
 
         for req in requests {
@@ -583,6 +604,7 @@ mod tests {
                         max_output: None,
                     }),
                     no_resize: false,
+                    rss_bytes: Some(142_000_000),
                 }],
             },
             Response::Output {
@@ -617,6 +639,13 @@ mod tests {
                         command: "send".into(),
                         payload: "hello\n".into(),
                     },
+                ],
+            },
+            Response::AgentEnv {
+                id: "test-agent".into(),
+                env: vec![
+                    ("CARGO_BUILD_JOBS".into(), "2".into()),
+                    ("PATH".into(), "/usr/bin".into()),
                 ],
             },
         ];

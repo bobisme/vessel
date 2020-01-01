@@ -346,7 +346,7 @@ pub enum Command {
         id: String,
 
         /// Number of lines to show.
-        #[arg(short = 'n', long, default_value = "10")]
+        #[arg(short = 'n', default_value = "10")]
         lines: usize,
 
         /// Follow output (like tail -f).
@@ -632,6 +632,24 @@ SUBAGENT WORKFLOW:
     GenTest {
         /// Agent ID.
         id: String,
+    },
+
+    /// Show an agent's runtime environment variables.
+    ///
+    /// Reads /proc/<pid>/environ for a running agent and displays its
+    /// actual environment. Useful for verifying that env vars like
+    /// CARGO_BUILD_JOBS are reaching the spawned process.
+    Env {
+        /// Agent ID.
+        id: String,
+
+        /// Output format: text (KEY=VALUE lines), json, or pretty.
+        #[arg(long)]
+        format: Option<String>,
+
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
     },
 }
 
