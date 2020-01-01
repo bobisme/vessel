@@ -41,7 +41,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Errors that can occur in the server.
 #[derive(Debug, Error)]
@@ -90,6 +90,7 @@ impl Server {
     }
 
     /// Run the server event loop.
+    #[instrument(skip(self), fields(socket = %self.socket_path.display()))]
     pub async fn run(&mut self) -> Result<(), ServerError> {
         // Security: Check for symlink attack before removing existing socket
         if self.socket_path.exists() {
@@ -185,6 +186,7 @@ impl Server {
 }
 
 /// Handle a single client connection.
+#[instrument(skip_all)]
 async fn handle_connection(
     stream: UnixStream,
     manager: Arc<Mutex<AgentManager>>,
@@ -301,6 +303,7 @@ async fn handle_connection(
 }
 
 /// Handle a single request.
+#[instrument(skip_all)]
 async fn handle_request(
     request: Request,
     manager: &Arc<Mutex<AgentManager>>,
@@ -315,7 +318,7 @@ async fn handle_request(
             }
 
             // Parse environment variables
-            let env_vars: Vec<(String, String)> = env
+            let mut env_vars: Vec<(String, String)> = env
                 .iter()
                 .filter_map(|s| {
                     let mut parts = s.splitn(2, '=');
@@ -327,6 +330,14 @@ async fn handle_request(
                     }
                 })
                 .collect();
+
+            // Auto-inject TRACEPARENT for distributed tracing if not already set.
+            // This propagates the current trace context to spawned agent processes.
+            if !env_vars.iter().any(|(k, _)| k == "TRACEPARENT") {
+                if let Some(tp) = crate::telemetry::current_traceparent() {
+                    env_vars.push(("TRACEPARENT".to_string(), tp));
+                }
+            }
 
             // Build resource limits if any are specified
             let limits = if timeout.is_some() || max_output.is_some() {
@@ -782,6 +793,7 @@ async fn handle_request(
 }
 
 /// Handle attach mode - streaming I/O between client and agent PTY.
+#[instrument(skip(reader, writer, manager, event_tx))]
 async fn handle_attach(
     agent_id: String,
     readonly: bool,
@@ -911,6 +923,7 @@ async fn handle_attach(
 }
 
 /// Handle event streaming - subscribe to agent lifecycle events.
+#[instrument(skip(writer, event_tx))]
 async fn handle_events(
     filter: Vec<String>,
     include_output: bool,

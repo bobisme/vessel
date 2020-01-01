@@ -5,7 +5,6 @@ use clap::Parser;
 use serde_json::json;
 use std::io::Write;
 use tracing::error;
-use tracing_subscriber::EnvFilter;
 
 /// Parse a signal name or number into a Unix signal number.
 ///
@@ -211,16 +210,9 @@ fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String 
 async fn main() {
     let cli = Cli::parse();
 
-    // Initialize logging
-    let filter = if cli.verbose {
-        EnvFilter::new("botty=debug")
-    } else {
-        EnvFilter::new("botty=warn")
-    };
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+    // Initialize telemetry (tracing + optional OTLP export).
+    // The guard must be held until exit to flush pending spans.
+    let _telemetry = botty::telemetry::init(cli.verbose);
 
     let socket_path = cli.socket.unwrap_or_else(default_socket_path);
 
