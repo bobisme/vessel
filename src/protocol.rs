@@ -87,6 +87,10 @@ pub enum Request {
         /// Enable command recording for this agent.
         #[serde(default)]
         record: bool,
+        /// Memory limit for the agent (e.g., "4G", "512M").
+        /// Uses systemd cgroups on Linux.
+        #[serde(default)]
+        memory_limit: Option<String>,
     },
 
     /// List all agents (optionally filtered by labels).
@@ -523,6 +527,7 @@ mod tests {
                 cwd: None,
                 no_resize: false,
                 record: false,
+                memory_limit: Some("4G".into()),
             },
             Request::List { labels: vec![] },
             Request::Kill {

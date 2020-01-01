@@ -337,6 +337,7 @@ async fn run_doctor(
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
     {
@@ -415,7 +416,7 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, after, wait_for, format, json, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, memory_limit, after, wait_for, format, json, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
@@ -428,7 +429,7 @@ async fn run_client(
                 }
             }
 
-            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize, record };
+            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize, record, memory_limit };
             let response = client.request(request).await?;
 
             match response {
@@ -1625,6 +1626,7 @@ async fn run_client(
                 cwd: None,
                 no_resize: false,
                 record: false,
+                memory_limit: None,
             };
             let response = client.request(request).await?;
 

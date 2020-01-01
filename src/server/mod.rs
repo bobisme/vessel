@@ -309,7 +309,7 @@ async fn handle_request(
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, cwd, no_resize, record } => {
+        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, cwd, no_resize, record, memory_limit } => {
             if cmd.is_empty() {
                 return Response::error("command is empty");
             }
@@ -333,6 +333,39 @@ async fn handle_request(
                 Some(crate::protocol::ResourceLimits { timeout, max_output })
             } else {
                 None
+            };
+
+            // Wrap command in systemd-run for cgroup memory limits if requested
+            let effective_cmd = if let Some(ref limit) = memory_limit {
+                // Check if systemd-run is available
+                let has_systemd = std::process::Command::new("systemd-run")
+                    .arg("--version")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+
+                if has_systemd {
+                    let mut wrapped = vec![
+                        "systemd-run".to_string(),
+                        "--user".to_string(),
+                        "--scope".to_string(),
+                        "-p".to_string(),
+                        format!("MemoryMax={limit}"),
+                        "-p".to_string(),
+                        "MemorySwapMax=0".to_string(),
+                        "--".to_string(),
+                    ];
+                    wrapped.extend(cmd.iter().cloned());
+                    info!(%limit, "Wrapping spawn with systemd-run cgroup limit");
+                    wrapped
+                } else {
+                    warn!("--memory-limit requested but systemd-run not available; spawning without cgroup limits");
+                    cmd.clone()
+                }
+            } else {
+                cmd.clone()
             };
 
             // Validate and resolve agent ID
@@ -370,7 +403,7 @@ async fn handle_request(
             let spawn_env = pty::SpawnEnv {
                 vars: env_vars,
             };
-            match pty::spawn_with_env(&cmd, rows, cols, &spawn_env, cwd.as_deref()) {
+            match pty::spawn_with_env(&effective_cmd, rows, cols, &spawn_env, cwd.as_deref()) {
                 Ok(pty_process) => {
                     let pid = pty_process.pid.as_raw() as u32;
                     let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols, no_resize, record);

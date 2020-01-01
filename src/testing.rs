@@ -107,6 +107,7 @@ impl TestHarness {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         };
 
         let response = self

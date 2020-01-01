@@ -89,6 +89,7 @@ async fn test_spawn_and_list() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -163,6 +164,7 @@ async fn test_spawn_send_snapshot() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -298,6 +300,7 @@ async fn test_screen_cursor_movement() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -379,6 +382,7 @@ async fn test_transcript_tail() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -458,6 +462,7 @@ async fn test_attach_and_detach() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -558,6 +563,7 @@ async fn test_attach_readonly_mode() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -688,6 +694,7 @@ async fn test_attach_receives_output() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -792,6 +799,7 @@ async fn test_attach_agent_exit() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
         })
         .await
         .expect("spawn failed");
@@ -888,6 +896,7 @@ async fn test_kill_all() {
             cwd: None,
             no_resize: false,
             record: false,
+            memory_limit: None,
             })
             .await
             .expect("spawn failed");

@@ -161,6 +161,12 @@ pub enum Command {
         #[arg(long)]
         cwd: Option<String>,
 
+        /// Memory limit for the agent and all its children (e.g., "4G", "512M").
+        /// Uses systemd cgroups on Linux. When exceeded, only this agent is killed,
+        /// not the entire system.
+        #[arg(long, value_name = "SIZE")]
+        memory_limit: Option<String>,
+
         /// Prevent auto-resize from view command (keeps stable dimensions for snapshots).
         #[arg(long)]
         no_resize: bool,
