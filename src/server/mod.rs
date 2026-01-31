@@ -661,6 +661,12 @@ async fn handle_request(
                 // displaying output rendered at old size)
                 if clear_transcript {
                     agent.transcript.clear();
+                    // Send SIGWINCH to force child process to redraw its UI
+                    // This is critical for TUI programs like htop that need to redraw after transcript clear
+                    use nix::sys::signal::Signal;
+                    if let Err(e) = agent.pty.signal(Signal::SIGWINCH) {
+                        warn!(%id, "Failed to send SIGWINCH after transcript clear: {e}");
+                    }
                     info!(%id, %rows, %cols, "Resized agent and cleared transcript");
                 } else {
                     info!(%id, %rows, %cols, "Resized agent");
