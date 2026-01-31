@@ -661,6 +661,8 @@ async fn handle_request(
                 // displaying output rendered at old size)
                 if clear_transcript {
                     agent.transcript.clear();
+                    // Mark screen as recently cleared to avoid sending stale initial render in attach
+                    agent.screen_cleared_at = Some(std::time::Instant::now());
                     // Send SIGWINCH to force child process to redraw its UI
                     // This is critical for TUI programs like htop that need to redraw after transcript clear
                     use nix::sys::signal::Signal;
@@ -735,19 +737,36 @@ async fn handle_attach(
     info!("Attach started for agent {agent_id}");
 
     // Send initial screen render so the client starts with correct display state
-    // This is critical for TUI programs that use incremental updates
+    // This is critical for TUI programs that use incremental updates.
+    // However, skip sending if the screen was recently cleared (within 1s) to avoid
+    // showing stale data while the child process redraws after SIGWINCH.
     {
         let mgr = manager.lock().await;
         if let Some(agent) = mgr.get(&agent_id) {
-            let initial_screen = agent.screen.render_full_screen();
-            info!("Sending initial screen render: {} bytes", initial_screen.len());
-            drop(mgr); // Release lock before async write
-            writer
-                .write_all(&initial_screen)
-                .await
-                .map_err(ServerError::Io)?;
-            writer.flush().await.map_err(ServerError::Io)?;
-            info!("Initial screen render sent");
+            let recently_cleared = agent.screen_cleared_at
+                .map_or(false, |t| t.elapsed() < std::time::Duration::from_millis(1000));
+
+            if recently_cleared {
+                // Screen was just cleared, send a simple clear instead of stale content
+                info!("Screen recently cleared, sending clear screen instead of stale render");
+                drop(mgr);
+                writer
+                    .write_all(b"\x1b[2J\x1b[H")  // Clear screen + cursor home
+                    .await
+                    .map_err(ServerError::Io)?;
+                writer.flush().await.map_err(ServerError::Io)?;
+            } else {
+                // Normal case: send full screen render
+                let initial_screen = agent.screen.render_full_screen();
+                info!("Sending initial screen render: {} bytes", initial_screen.len());
+                drop(mgr); // Release lock before async write
+                writer
+                    .write_all(&initial_screen)
+                    .await
+                    .map_err(ServerError::Io)?;
+                writer.flush().await.map_err(ServerError::Io)?;
+                info!("Initial screen render sent");
+            }
         }
     }
 

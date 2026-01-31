@@ -43,6 +43,9 @@ pub struct Agent {
     pub sigterm_sent: bool,
     /// When SIGTERM was sent (for tracking grace period).
     pub sigterm_sent_at: Option<Instant>,
+    /// Last time the screen was cleared (for resize with clear_transcript).
+    /// Used to avoid sending stale initial renders in attach.
+    pub screen_cleared_at: Option<Instant>,
 }
 
 impl Agent {
@@ -76,6 +79,7 @@ impl Agent {
             limits,
             sigterm_sent: false,
             sigterm_sent_at: None,
+            screen_cleared_at: None,
         }
     }
 
