@@ -16,7 +16,7 @@ to control interactive terminal programs programmatically.
 ```bash
 # Spawn an agent and interact with it
 botty spawn --name my-shell -- bash
-botty send my-shell "echo hello"
+botty send my-shell "echo hello" --newline  # -n to append newline (press Enter)
 botty snapshot my-shell
 
 # Kill agents by name, label, or command
@@ -70,7 +70,7 @@ Requires Rust 1.85+ (uses `let-else` and `let chains`).
 botty spawn --name demo -- bash
 
 # Send a command and read the screen
-botty send demo "ls -la"
+botty send demo "ls -la" -n  # -n appends newline to execute the command
 botty snapshot demo
 
 # Attach interactively (Ctrl+G then d to detach)

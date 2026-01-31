@@ -170,7 +170,7 @@ fn test_send_and_snapshot() {
 
     // Send a command
     env.botty()
-        .args(["send", &agent_id, "echo UNIQUE_TEST_STRING_12345"])
+        .args(["send", &agent_id, "echo UNIQUE_TEST_STRING_12345", "--newline"])
         .assert()
         .success();
 
@@ -588,7 +588,7 @@ fn test_wait_combined_conditions() {
 
     // Test 2: Send some output and wait for it with --contains alone
     env.botty()
-        .args(["send", &agent_id, "echo test123"])
+        .args(["send", &agent_id, "echo test123", "--newline"])
         .assert()
         .success();
 
@@ -600,7 +600,7 @@ fn test_wait_combined_conditions() {
     // Test 3: Combined --stable AND --contains
     // Send a command and wait for both stable screen AND specific content
     env.botty()
-        .args(["send", &agent_id, "echo hello-combined"])
+        .args(["send", &agent_id, "echo hello-combined", "--newline"])
         .assert()
         .success();
 

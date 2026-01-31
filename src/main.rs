@@ -430,12 +430,12 @@ async fn run_client(
         Command::Send {
             id,
             text,
-            no_newline,
+            newline,
         } => {
             let request = Request::Send {
                 id,
                 data: text,
-                newline: !no_newline,
+                newline,
             };
             let response = client.request(request).await?;
 

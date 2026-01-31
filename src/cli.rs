@@ -204,7 +204,8 @@ pub enum Command {
         proc: Option<String>,
     },
 
-    /// Send input to an agent.
+    /// Send text to an agent (literal, no newline by default).
+    /// Use --newline to append newline (like pressing Enter).
     Send {
         /// Agent ID.
         id: String,
@@ -212,9 +213,9 @@ pub enum Command {
         /// Text to send.
         text: String,
 
-        /// Do not append a newline.
-        #[arg(long)]
-        no_newline: bool,
+        /// Append a newline after the text (simulates pressing Enter).
+        #[arg(short = 'n', long)]
+        newline: bool,
     },
 
     /// Send raw bytes to an agent.
