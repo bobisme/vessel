@@ -105,6 +105,7 @@ impl TestHarness {
             max_output: None,
             env: vec![],
             env_clear: false,
+            cwd: None,
         };
 
         let response = self

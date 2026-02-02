@@ -49,6 +49,9 @@ pub enum Request {
         /// Clear environment before spawning.
         #[serde(default)]
         env_clear: bool,
+        /// Working directory for the spawned process.
+        #[serde(default)]
+        cwd: Option<String>,
     },
 
     /// List all agents (optionally filtered by labels).
@@ -442,6 +445,7 @@ mod tests {
                 max_output: Some(1024 * 1024),
                 env: vec![],
                 env_clear: false,
+                cwd: None,
             },
             Request::List { labels: vec![] },
             Request::Kill {

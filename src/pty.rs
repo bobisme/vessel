@@ -33,6 +33,9 @@ pub enum PtyError {
     #[error("failed to set controlling terminal: {0}")]
     SetControllingTerminal(#[source] nix::Error),
 
+    #[error("failed to change directory: {0}")]
+    Chdir(#[source] std::io::Error),
+
     #[error("failed to exec: {0}")]
     Exec(#[source] nix::Error),
 
@@ -134,7 +137,7 @@ pub struct SpawnEnv {
 ///
 /// A `PtyProcess` containing the master FD and child PID.
 pub fn spawn(cmd: &[String], rows: u16, cols: u16) -> Result<PtyProcess, PtyError> {
-    spawn_with_env(cmd, rows, cols, &SpawnEnv::default())
+    spawn_with_env(cmd, rows, cols, &SpawnEnv::default(), None)
 }
 
 /// Spawn a command in a new PTY with custom environment.
@@ -145,6 +148,7 @@ pub fn spawn(cmd: &[String], rows: u16, cols: u16) -> Result<PtyProcess, PtyErro
 /// * `rows` - Terminal height in rows
 /// * `cols` - Terminal width in columns
 /// * `env` - Environment configuration
+/// * `cwd` - Optional working directory for the child process
 ///
 /// # Returns
 ///
@@ -154,6 +158,7 @@ pub fn spawn_with_env(
     rows: u16,
     cols: u16,
     env: &SpawnEnv,
+    cwd: Option<&str>,
 ) -> Result<PtyProcess, PtyError> {
     if cmd.is_empty() {
         return Err(PtyError::EmptyCommand);
@@ -238,6 +243,11 @@ pub fn spawn_with_env(
                 for (key, value) in &env.vars {
                     std::env::set_var(key, value);
                 }
+            }
+
+            // Change working directory if requested
+            if let Some(dir) = cwd {
+                std::env::set_current_dir(dir).map_err(PtyError::Chdir)?;
             }
 
             // Convert command to CStrings

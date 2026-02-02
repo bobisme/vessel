@@ -300,7 +300,7 @@ async fn handle_request(
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, env_clear } => {
+        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, env_clear, cwd } => {
             if cmd.is_empty() {
                 return Response::error("command is empty");
             }
@@ -358,7 +358,7 @@ async fn handle_request(
                 vars: env_vars,
                 clear: env_clear,
             };
-            match pty::spawn_with_env(&cmd, rows, cols, &spawn_env) {
+            match pty::spawn_with_env(&cmd, rows, cols, &spawn_env, cwd.as_deref()) {
                 Ok(pty_process) => {
                     let mut mgr = manager.lock().await;
                     // Double-check uniqueness (in case of race) - only block if running

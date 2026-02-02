@@ -149,6 +149,10 @@ pub enum Command {
         #[arg(long)]
         env_clear: bool,
 
+        /// Set working directory for the spawned process.
+        #[arg(long)]
+        cwd: Option<String>,
+
         /// Wait for agent(s) to exit before spawning (can be repeated).
         #[arg(long)]
         after: Vec<String>,
