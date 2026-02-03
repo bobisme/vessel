@@ -283,6 +283,27 @@ br ready
 - Update status as you progress: `open` → `in_progress` → `closed`.
 - Reference bead IDs in all bus messages.
 - Sync on session end: `br sync --flush-only`.
+- **Always push to main** after completing beads (see [finish.md](.agents/botbox/finish.md)).
+- **Release after features/fixes**: If the batch includes user-visible changes (not just chores), follow the project's release process (version bump → tag → announce).
+
+### Beads Quick Reference
+
+Beads are **project-local** — always `cd` to the project directory first.
+
+| Operation | Command |
+|-----------|---------|
+| View ready work | `br ready` |
+| Show bead | `br show <id>` |
+| Create | `br create --actor $AGENT --owner $AGENT --title="..." --type=task --priority=2` |
+| Start work | `br update --actor $AGENT <id> --status=in_progress` |
+| Add comment | `br comments add --actor $AGENT --author $AGENT <id> "message"` |
+| Close | `br close --actor $AGENT <id>` |
+| Add labels | `br update --actor $AGENT <id> --labels=foo,bar` |
+| Add dependency | `br dep add --actor $AGENT <blocked> <blocker>` |
+| Block | `br update --actor $AGENT <id> --status=blocked` |
+| Sync | `br sync --flush-only` |
+
+**Required flags**: `--actor $AGENT` on all mutations, `--author $AGENT` on comments.
 
 ### Mesh Protocol
 
@@ -301,8 +322,11 @@ br ready
 
 ### Reviews
 
-- Use `crit` to open and request reviews.
-- If a reviewer is not online, claim `agent://reviewer-<role>` and spawn them.
+- Use `crit` to create reviews and `@<project>-<role>` mentions to spawn reviewers.
+- To request a security review:
+  1. `crit reviews request <review-id> --reviewers $PROJECT-security --agent $AGENT`
+  2. `bus send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-security" -L review-request`
+  (The @mention in the bus message triggers the auto-spawn hook)
 - Reviewer agents loop until no pending reviews remain (see review-loop doc).
 
 ### Cross-Project Feedback
@@ -328,14 +352,13 @@ See [report-issue.md](.agents/botbox/report-issue.md) for details.
 
 ### Loop Scripts
 
-Scripts in `scripts/` automate agent loops:
+Scripts in `.agents/botbox/scripts/` automate agent loops:
 
 | Script | Purpose |
 |--------|---------|
-| `agent-loop.sh` | Worker: sequential triage-start-work-finish |
-| `dev-loop.sh` | Lead dev: triage, parallel dispatch, merge |
-| `reviewer-loop.sh` | Reviewer: review loop until queue empty |
-| `spawn-security-reviewer.sh` | Spawn a security reviewer |
+| `agent-loop.mjs` | Worker: sequential triage-start-work-finish |
+| `dev-loop.mjs` | Lead dev: triage, parallel dispatch, merge |
+| `reviewer-loop.mjs` | Reviewer: review loop until queue empty |
 
-Usage: `bash scripts/<script>.sh <project-name> [agent-name]`
+Usage: `bun .agents/botbox/scripts/<script>.mjs <project-name> [agent-name]`
 <!-- botbox:managed-end -->

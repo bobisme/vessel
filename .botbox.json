@@ -1,10 +1,12 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.4",
   "project": {
     "name": "botty",
     "type": [
       "cli"
-    ]
+    ],
+    "default_agent": "botty-dev",
+    "channel": "botty"
   },
   "tools": {
     "beads": true,
