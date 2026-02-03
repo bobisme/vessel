@@ -46,6 +46,8 @@ pub struct Agent {
     /// Last time the screen was cleared (for resize with clear_transcript).
     /// Used to avoid sending stale initial renders in attach.
     pub screen_cleared_at: Option<Instant>,
+    /// Whether this agent is immune to auto-resize from view.
+    pub no_resize: bool,
 }
 
 impl Agent {
@@ -59,6 +61,7 @@ impl Agent {
         pty: PtyProcess,
         rows: u16,
         cols: u16,
+        no_resize: bool,
     ) -> Self {
         // Use max_output limit for transcript size, or default to 1MB
         let transcript_size = limits
@@ -80,6 +83,7 @@ impl Agent {
             sigterm_sent: false,
             sigterm_sent_at: None,
             screen_cleared_at: None,
+            no_resize,
         }
     }
 

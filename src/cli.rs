@@ -153,6 +153,10 @@ pub enum Command {
         #[arg(long)]
         cwd: Option<String>,
 
+        /// Prevent auto-resize from view command (keeps stable dimensions for snapshots).
+        #[arg(long)]
+        no_resize: bool,
+
         /// Wait for agent(s) to exit before spawning (can be repeated).
         #[arg(long)]
         after: Vec<String>,

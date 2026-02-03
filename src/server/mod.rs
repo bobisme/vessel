@@ -300,7 +300,7 @@ async fn handle_request(
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, env_clear, cwd } => {
+        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, env_clear, cwd, no_resize } => {
             if cmd.is_empty() {
                 return Response::error("command is empty");
             }
@@ -369,7 +369,7 @@ async fn handle_request(
                         mgr.remove(&id);
                     }
                     let pid = pty_process.pid.as_raw() as u32;
-                    let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols);
+                    let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols, no_resize);
                     mgr.add(agent);
                     info!(%id, %pid, ?labels, ?limits, "Spawned agent");
                     
@@ -414,6 +414,7 @@ async fn handle_request(
                         exit_code: agent.exit_code(),
                         exit_reason: agent.exit_reason,
                         limits: agent.limits,
+                        no_resize: agent.no_resize,
                     }
                 })
                 .collect();

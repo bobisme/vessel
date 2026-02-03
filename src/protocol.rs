@@ -52,6 +52,9 @@ pub enum Request {
         /// Working directory for the spawned process.
         #[serde(default)]
         cwd: Option<String>,
+        /// Prevent auto-resize from view command.
+        #[serde(default)]
+        no_resize: bool,
     },
 
     /// List all agents (optionally filtered by labels).
@@ -201,6 +204,9 @@ pub struct AgentInfo {
     /// Resource limits applied to this agent.
     #[serde(default)]
     pub limits: Option<ResourceLimits>,
+    /// Whether this agent is immune to auto-resize.
+    #[serde(default)]
+    pub no_resize: bool,
 }
 
 /// Why an agent exited.
@@ -446,6 +452,7 @@ mod tests {
                 env: vec![],
                 env_clear: false,
                 cwd: None,
+                no_resize: false,
             },
             Request::List { labels: vec![] },
             Request::Kill {
@@ -519,6 +526,7 @@ mod tests {
                         timeout: Some(60),
                         max_output: None,
                     }),
+                    no_resize: false,
                 }],
             },
             Response::Output {

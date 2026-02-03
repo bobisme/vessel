@@ -183,6 +183,7 @@ async fn run_doctor(
             env: vec![],
             env_clear: false,
             cwd: None,
+            no_resize: false,
         })
         .await
     {
@@ -261,13 +262,13 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, env, env_clear, cwd, after, wait_for, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, env, env_clear, cwd, no_resize, after, wait_for, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
             }
 
-            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, env_clear, cwd };
+            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, env_clear, cwd, no_resize };
             let response = client.request(request).await?;
 
             match response {
@@ -331,6 +332,9 @@ async fn run_client(
                                         "timeout": limits.timeout,
                                         "max_output": limits.max_output,
                                     });
+                                }
+                                if a.no_resize {
+                                    obj["no_resize"] = serde_json::json!(true);
                                 }
                                 obj
                             })
@@ -1011,6 +1015,7 @@ async fn run_client(
                 env: vec![],
                 env_clear: false,
                 cwd: None,
+                no_resize: false,
             };
             let response = client.request(request).await?;
 
@@ -2029,7 +2034,7 @@ async fn resize_agents_to_panes(
     use tokio::net::UnixStream;
 
     let pane_sizes = view.get_pane_sizes()?;
-    
+
     if pane_sizes.is_empty() {
         return Ok(());
     }
@@ -2038,7 +2043,29 @@ async fn resize_agents_to_panes(
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
+    // Query agent list to find no_resize agents
+    let list_request = Request::List { labels: vec![] };
+    let mut json = serde_json::to_string(&list_request)?;
+    json.push('\n');
+    writer.write_all(json.as_bytes()).await?;
+
+    let mut line = String::new();
+    reader.read_line(&mut line).await?;
+
+    let no_resize_ids: std::collections::HashSet<String> = match serde_json::from_str::<Response>(&line)? {
+        Response::Agents { agents } => agents
+            .into_iter()
+            .filter(|a| a.no_resize)
+            .map(|a| a.id)
+            .collect(),
+        _ => std::collections::HashSet::new(),
+    };
+
     for (agent_id, (rows, cols)) in pane_sizes {
+        if no_resize_ids.contains(&agent_id) {
+            tracing::debug!("Skipping resize for {} (no_resize)", agent_id);
+            continue;
+        }
         let request = Request::Resize {
             id: agent_id.clone(),
             rows,
@@ -2098,11 +2125,11 @@ async fn run_resize_panes_command(
     let mut line = String::new();
     reader.read_line(&mut line).await?;
 
-    // Collect agent IDs and their PIDs for SIGWINCH
+    // Collect agent IDs and their PIDs for SIGWINCH (skip no_resize agents)
     let agents: Vec<(String, u32)> = match serde_json::from_str::<Response>(&line)? {
         Response::Agents { agents } => agents
             .into_iter()
-            .filter(|a| a.state == botty::AgentState::Running)
+            .filter(|a| a.state == botty::AgentState::Running && !a.no_resize)
             .map(|a| (a.id, a.pid))
             .collect(),
         Response::Error { message } => return Err(message.into()),
