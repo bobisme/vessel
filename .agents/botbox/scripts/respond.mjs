@@ -161,10 +161,11 @@ IMPORTANT:
 - If you need to check something (files, beads, etc.), do so
 - After responding, the conversation may continue - keep context in mind
 
-Respond to the mention/question. Be helpful but brief.
-Do NOT create beads or workspaces - this is a conversational response, not a work task.
+RESPOND using: bus send --agent ${AGENT} ${channel} "your response here" (no -L label needed)
 
-After your response, output: <promise>RESPONDED</promise>`
+Be helpful but brief. Do NOT create beads or workspaces - this is a conversational response, not a work task.
+
+After posting your response, output: <promise>RESPONDED</promise>`
 }
 
 // --- Run agent via botbox run-agent ---
@@ -205,21 +206,29 @@ async function runClaude(prompt, model) {
 
 // --- Wait for follow-up message ---
 async function waitForFollowUp(channel) {
+  let args = [
+    "wait",
+    "--agent",
+    AGENT,
+    "--mention",
+    "--channel",
+    channel,
+    "--timeout",
+    WAIT_TIMEOUT.toString(),
+    "--format",
+    "json",
+  ]
+  console.log(`Running: bus ${args.join(" ")}`)
   try {
-    let result = await runCommand("bus", [
-      "wait",
-      "--agent",
-      AGENT,
-      "--mention",
-      "--channel",
-      channel,
-      "--timeout",
-      WAIT_TIMEOUT.toString(),
-      "--format",
-      "json",
-    ])
-    return JSON.parse(result.stdout)
-  } catch {
+    let result = await runCommand("bus", args)
+    let parsed = JSON.parse(result.stdout)
+    if (parsed.received && parsed.message) {
+      console.log(`Follow-up received from ${parsed.message.agent}`)
+      return parsed.message
+    }
+    return null
+  } catch (err) {
+    console.log(`bus wait: ${err.message.includes("timeout") ? "timeout" : err.message}`)
     return null // Timeout or error
   }
 }
@@ -227,6 +236,9 @@ async function waitForFollowUp(channel) {
 // --- Cleanup handler ---
 async function cleanup() {
   console.log("Cleaning up...")
+  try {
+    await runCommand("bus", ["claims", "release", "--agent", AGENT, `respond://${AGENT}`])
+  } catch {}
   try {
     await runCommand("bus", ["statuses", "clear", "--agent", AGENT])
   } catch {}
@@ -268,6 +280,24 @@ async function main() {
   console.log(`Agent:   ${AGENT}`)
   console.log(`Project: ${PROJECT}`)
   console.log(`Channel: ${channel}`)
+
+  // Stake claim to prevent duplicate spawns
+  let claimPattern = `respond://${AGENT}`
+  try {
+    await runCommand("bus", [
+      "claims",
+      "stake",
+      "--agent",
+      AGENT,
+      claimPattern,
+      "--ttl",
+      `${WAIT_TIMEOUT + 60}`,
+    ])
+    console.log(`Claimed: ${claimPattern}`)
+  } catch {
+    // Claim already held - another agent is orchestrating, continue
+    console.log(`Claim ${claimPattern} held by another agent, continuing`)
+  }
 
   // Set status
   await runCommand("bus", [
@@ -368,6 +398,20 @@ async function main() {
 
     // Wait for follow-up
     console.log(`\nWaiting ${WAIT_TIMEOUT}s for follow-up...`)
+
+    // Refresh claim for the wait period
+    try {
+      await runCommand("bus", [
+        "claims",
+        "stake",
+        "--agent",
+        AGENT,
+        `respond://${AGENT}`,
+        "--ttl",
+        `${WAIT_TIMEOUT + 60}`,
+      ])
+    } catch {}
+
     await runCommand("bus", [
       "statuses",
       "set",

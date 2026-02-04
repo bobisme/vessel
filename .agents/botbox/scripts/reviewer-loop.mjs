@@ -399,9 +399,9 @@ async function main() {
 				'-m',
 				`reviewer-loop for ${PROJECT}`,
 			]);
-		} catch (err) {
-			console.log(`Claim denied. Agent ${AGENT} is already running.`);
-			process.exit(0);
+		} catch {
+			// Claim held by another agent - they're orchestrating, continue
+			console.log(`Claim held by another agent, continuing`);
 		}
 	}
 
