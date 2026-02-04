@@ -6,8 +6,10 @@
  * for question prefixes (q:, qq:, big q:, q(model):) to select the model,
  * responds, then waits for follow-up messages using `bus wait`.
  *
- * Uses inbox to find recent mentions - doesn't rely on hook env vars since
- * botty spawn doesn't pass them through.
+ * Environment (from hook):
+ *   BOTBUS_CHANNEL - channel where the mention occurred
+ *   BOTBUS_MESSAGE_ID - the triggering message ID
+ *   BOTBUS_AGENT - the sender of the triggering message
  *
  * Usage: respond.mjs <project> <agent-name>
  */
@@ -81,7 +83,11 @@ Options:
 
 Arguments:
   project      Project name (default: from .botbox.json)
-  agent-name   Agent identity (default: from .botbox.json)`)
+  agent-name   Agent identity (default: from .botbox.json or BOTBUS_AGENT env)
+
+Environment (from hook):
+  BOTBUS_CHANNEL    - channel where mention occurred
+  BOTBUS_MESSAGE_ID - triggering message ID`)
     process.exit(0)
   }
 

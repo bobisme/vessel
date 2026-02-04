@@ -1,0 +1,7 @@
+Resumed work on bd-3aj (environment variable inheritance bug). Responded to Bob's feedback about security concerns with --pass-env approach. Implemented selective env var inheritance via [36m--pass-env VAR1,VAR2,...[0m flag:
+- Added CLI flag to src/cli.rs with comma-delimited value support
+- Client-side handling in main.rs reads specified vars and adds to request
+- Added tests in tests/cli.rs (test_spawn_pass_env, test_spawn_pass_env_nonexistent)
+- All tests pass
+
+Created review cr-2rll and requested security review via @botty-security (auto-spawned). Waiting for reviewer feedback before merge.
