@@ -44,11 +44,9 @@ pub enum Request {
         #[serde(default)]
         max_output: Option<u64>,
         /// Environment variables to set (KEY=VALUE pairs).
+        /// The environment is always clean; only these vars are set.
         #[serde(default)]
         env: Vec<String>,
-        /// Clear environment before spawning.
-        #[serde(default)]
-        env_clear: bool,
         /// Working directory for the spawned process.
         #[serde(default)]
         cwd: Option<String>,
@@ -450,7 +448,6 @@ mod tests {
                 timeout: Some(60),
                 max_output: Some(1024 * 1024),
                 env: vec![],
-                env_clear: false,
                 cwd: None,
                 no_resize: false,
             },

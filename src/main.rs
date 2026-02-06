@@ -6,6 +6,43 @@ use std::io::Write;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
 
+/// Parse a signal name or number into a Unix signal number.
+///
+/// Accepts: number (e.g., "15"), name with or without SIG prefix (e.g., "TERM",
+/// "SIGTERM", "term"). Returns an error message if unrecognized.
+fn parse_signal(s: &str) -> Result<i32, String> {
+    // Try numeric first
+    if let Ok(n) = s.parse::<i32>() {
+        if n > 0 && n < 65 {
+            return Ok(n);
+        }
+        return Err(format!("signal number out of range: {n}"));
+    }
+
+    // Normalize: uppercase, strip SIG prefix
+    let name = s.to_ascii_uppercase();
+    let name = name.strip_prefix("SIG").unwrap_or(&name);
+
+    match name {
+        "HUP" => Ok(1),
+        "INT" => Ok(2),
+        "QUIT" => Ok(3),
+        "KILL" => Ok(9),
+        "USR1" => Ok(10),
+        "USR2" => Ok(12),
+        "PIPE" => Ok(13),
+        "ALRM" => Ok(14),
+        "TERM" => Ok(15),
+        "CONT" => Ok(18),
+        "STOP" => Ok(19),
+        "TSTP" => Ok(20),
+        "TTIN" => Ok(21),
+        "TTOU" => Ok(22),
+        "WINCH" => Ok(28),
+        _ => Err(format!("unknown signal: {s}")),
+    }
+}
+
 /// Guard that restores terminal output settings on drop.
 struct RawOutputGuard {
     original_termios: nix::sys::termios::Termios,
@@ -181,7 +218,6 @@ async fn run_doctor(
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
             cwd: None,
             no_resize: false,
         })
@@ -262,13 +298,13 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, env, env_clear, cwd, no_resize, after, wait_for, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, env, cwd, no_resize, after, wait_for, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
             }
 
-            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, env_clear, cwd, no_resize };
+            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize };
             let response = client.request(request).await?;
 
             match response {
@@ -396,7 +432,7 @@ async fn run_client(
             }
         }
 
-        Command::Kill { id, label, all, term, proc } => {
+        Command::Kill { id, label, all, force, proc } => {
             // Must specify either id, label, proc, or all
             if id.is_none() && label.is_empty() && !all && proc.is_none() {
                 return Err("must specify agent ID, --label, --proc, or --all".into());
@@ -405,7 +441,7 @@ async fn run_client(
             if all && (id.is_some() || !label.is_empty() || proc.is_some()) {
                 return Err("--all cannot be combined with agent ID, --label, or --proc".into());
             }
-            let signal = if term { 15 } else { 9 }; // SIGTERM or SIGKILL (default)
+            let signal = if force { 9 } else { 15 }; // SIGKILL or SIGTERM (default)
             let request = Request::Kill { id, labels: label, all, signal, proc_filter: proc };
             let response = client.request(request).await?;
 
@@ -424,6 +460,30 @@ async fn run_client(
                         return Ok(());
                     }
                     // For other errors (permission denied, signal failures), still error
+                    return Err(message.into());
+                }
+                _ => {
+                    return Err("unexpected response".into());
+                }
+            }
+        }
+
+        Command::Signal { id, signal, label, all, proc } => {
+            if id.is_none() && label.is_empty() && !all && proc.is_none() {
+                return Err("must specify agent ID, --label, --proc, or --all".into());
+            }
+            if all && (id.is_some() || !label.is_empty() || proc.is_some()) {
+                return Err("--all cannot be combined with agent ID, --label, or --proc".into());
+            }
+            let signal = parse_signal(&signal)?;
+            let request = Request::Kill { id, labels: label, all, signal, proc_filter: proc };
+            let response = client.request(request).await?;
+
+            match response {
+                Response::Ok => {
+                    println!("Signal sent");
+                }
+                Response::Error { message } => {
                     return Err(message.into());
                 }
                 _ => {
@@ -1013,7 +1073,6 @@ async fn run_client(
                 timeout: None,
                 max_output: None,
                 env: vec![],
-                env_clear: false,
                 cwd: None,
                 no_resize: false,
             };

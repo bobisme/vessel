@@ -104,7 +104,6 @@ impl TestHarness {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
             cwd: None,
             no_resize: false,
         };

@@ -85,7 +85,7 @@ async fn test_spawn_and_list() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -158,7 +158,7 @@ async fn test_spawn_send_snapshot() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -291,7 +291,7 @@ async fn test_screen_cursor_movement() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -371,7 +371,7 @@ async fn test_transcript_tail() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -449,7 +449,7 @@ async fn test_attach_and_detach() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -548,7 +548,7 @@ async fn test_attach_readonly_mode() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -677,7 +677,7 @@ async fn test_attach_receives_output() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -780,7 +780,7 @@ async fn test_attach_agent_exit() {
             timeout: None,
             max_output: None,
             env: vec![],
-            env_clear: false,
+
             cwd: None,
             no_resize: false,
         })
@@ -875,7 +875,7 @@ async fn test_kill_all() {
                 timeout: None,
                 max_output: None,
                 env: vec![],
-                env_clear: false,
+    
             cwd: None,
             no_resize: false,
             })

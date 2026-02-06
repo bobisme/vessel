@@ -116,6 +116,10 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Spawn a new agent.
+    ///
+    /// Agents start with a clean environment. A minimal set of essential
+    /// variables (PATH, HOME, USER, TERM, SHELL, LANG) is inherited from
+    /// the server. Use --env to add or override variables.
     Spawn {
         /// Terminal rows.
         #[arg(long, default_value = "24")]
@@ -141,13 +145,11 @@ pub enum Command {
         #[arg(long)]
         max_output: Option<u64>,
 
-        /// Environment variables (KEY=VALUE format, can be repeated).
+        /// Additional environment variables (KEY=VALUE format, can be repeated).
+        /// Agents always get PATH, HOME, USER, TERM, SHELL, LANG from the
+        /// server. Use --env to add more or override these defaults.
         #[arg(long, short, value_name = "KEY=VALUE")]
         env: Vec<String>,
-
-        /// Clear environment before spawning (only set explicit --env vars).
-        #[arg(long)]
-        env_clear: bool,
 
         /// Set working directory for the spawned process.
         #[arg(long)]
@@ -203,11 +205,37 @@ pub enum Command {
         #[arg(long, short)]
         all: bool,
 
-        /// Send SIGTERM instead of SIGKILL (for graceful shutdown).
-        #[arg(long)]
-        term: bool,
+        /// Send SIGKILL instead of SIGTERM (force kill, no cleanup).
+        #[arg(long, short)]
+        force: bool,
 
         /// Kill agents whose command contains this substring (e.g., --proc htop).
+        #[arg(long, short)]
+        proc: Option<String>,
+    },
+
+    /// Send a Unix signal to an agent.
+    ///
+    /// Signal can be a name (TERM, KILL, USR1, HUP, INT, STOP, CONT, etc.)
+    /// or a number (15, 9, 10, etc.). Names are case-insensitive and the
+    /// SIG prefix is optional (e.g., TERM, SIGTERM, and term all work).
+    Signal {
+        /// Agent ID (optional if using --label, --proc, or --all).
+        id: Option<String>,
+
+        /// Signal to send (name or number, e.g., USR1, HUP, 10).
+        #[arg(long, short)]
+        signal: String,
+
+        /// Send to all agents with these labels (can be repeated).
+        #[arg(long, short)]
+        label: Vec<String>,
+
+        /// Send to all running agents.
+        #[arg(long, short)]
+        all: bool,
+
+        /// Send to agents whose command contains this substring.
         #[arg(long, short)]
         proc: Option<String>,
     },

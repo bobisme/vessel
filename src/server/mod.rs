@@ -300,7 +300,7 @@ async fn handle_request(
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, env_clear, cwd, no_resize } => {
+        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, cwd, no_resize } => {
             if cmd.is_empty() {
                 return Response::error("command is empty");
             }
@@ -356,7 +356,6 @@ async fn handle_request(
 
             let spawn_env = pty::SpawnEnv {
                 vars: env_vars,
-                clear: env_clear,
             };
             match pty::spawn_with_env(&cmd, rows, cols, &spawn_env, cwd.as_deref()) {
                 Ok(pty_process) => {

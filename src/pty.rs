@@ -116,13 +116,29 @@ impl PtyProcess {
     }
 }
 
+/// Minimal set of environment variables always provided to spawned agents.
+///
+/// These are captured from the server's environment at spawn time.
+/// Explicit `--env` values override these.
+const ESSENTIAL_ENV_VARS: &[&str] = &[
+    "PATH",   // command resolution
+    "HOME",   // home directory
+    "USER",   // current user
+    "TERM",   // terminal type (critical for PTY)
+    "SHELL",  // default shell
+    "LANG",   // locale / character encoding
+];
+
 /// Environment configuration for spawning.
+///
+/// The environment is always cleared before setting vars.
+/// Essential vars (PATH, HOME, USER, TERM, SHELL, LANG) are set from
+/// the server's environment, then explicit vars are applied on top.
 #[derive(Debug, Default)]
 pub struct SpawnEnv {
     /// Environment variables to set (key, value pairs).
+    /// These override essential vars if they share a key.
     pub vars: Vec<(String, String)>,
-    /// If true, clear the environment before setting vars.
-    pub clear: bool,
 }
 
 /// Spawn a command in a new PTY.
@@ -170,6 +186,18 @@ pub fn spawn_with_env(
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+
+    // Capture essential env vars from server before forking.
+    // Explicit vars override these (collected into a map for dedup).
+    let explicit_keys: std::collections::HashSet<&str> =
+        env.vars.iter().map(|(k, _)| k.as_str()).collect();
+    // Used in child branch after fork; compiler warns because parent branch returns early.
+    #[allow(unused_variables)]
+    let essential: Vec<(String, String)> = ESSENTIAL_ENV_VARS
+        .iter()
+        .filter(|k| !explicit_keys.contains(**k))
+        .filter_map(|k| std::env::var(k).ok().map(|v| (k.to_string(), v)))
+        .collect();
 
     // Open a new PTY pair
     let OpenptyResult { master, slave } = openpty(&winsize, None).map_err(PtyError::OpenPty)?;
@@ -229,17 +257,18 @@ pub fn spawn_with_env(
                 drop(slave);
             }
 
-            // Set up environment
+            // Set up environment: clear everything, then set essential + explicit vars.
             // SAFETY: We're in a forked child process before exec, so modifying
             // environment is safe (no other threads exist in this process).
             unsafe {
-                if env.clear {
-                    // Clear all environment variables
-                    for (key, _) in std::env::vars() {
-                        std::env::remove_var(&key);
-                    }
+                for (key, _) in std::env::vars() {
+                    std::env::remove_var(&key);
                 }
-                // Set requested environment variables
+                // Set essential vars (PATH, HOME, USER, TERM, SHELL, LANG)
+                for (key, value) in &essential {
+                    std::env::set_var(key, value);
+                }
+                // Set explicit vars (override essentials if overlapping)
                 for (key, value) in &env.vars {
                     std::env::set_var(key, value);
                 }
