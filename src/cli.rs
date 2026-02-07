@@ -151,6 +151,12 @@ pub enum Command {
         #[arg(long, short, value_name = "KEY=VALUE")]
         env: Vec<String>,
 
+        /// Inherit env vars from the calling shell (comma-separated names).
+        /// Reads each variable from the client's environment and passes it
+        /// to the spawned agent (e.g., --env-inherit BOTBUS_AGENT,EDITOR).
+        #[arg(long, value_delimiter = ',')]
+        env_inherit: Vec<String>,
+
         /// Set working directory for the spawned process.
         #[arg(long)]
         cwd: Option<String>,

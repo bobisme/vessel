@@ -298,10 +298,17 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, env, cwd, no_resize, after, wait_for, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, after, wait_for, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
+            }
+
+            // --env-inherit: read named vars from client env, add to env list
+            for var_name in &env_inherit {
+                if let Ok(value) = std::env::var(var_name) {
+                    env.push(format!("{var_name}={value}"));
+                }
             }
 
             let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize };
