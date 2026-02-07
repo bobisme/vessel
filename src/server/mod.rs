@@ -60,6 +60,9 @@ pub enum ServerError {
 
     #[error("I/O error: {0}")]
     Io(#[source] std::io::Error),
+
+    #[error("another server is already running on this socket")]
+    AlreadyRunning,
 }
 
 /// The botty server.
@@ -93,15 +96,21 @@ impl Server {
             // Don't follow symlinks - check if it's actually a symlink
             let metadata = std::fs::symlink_metadata(&self.socket_path)
                 .map_err(ServerError::Io)?;
-            
+
             if metadata.file_type().is_symlink() {
                 return Err(ServerError::Bind(std::io::Error::other(
                     "socket path is a symlink - possible security attack",
                 )));
             }
-            
-            // Only remove if it's a socket (or we can't tell)
-            if metadata.file_type().is_socket() || metadata.file_type().is_file() {
+
+            // If it's a socket, check if another server is already running
+            if metadata.file_type().is_socket() {
+                if UnixStream::connect(&self.socket_path).await.is_ok() {
+                    return Err(ServerError::AlreadyRunning);
+                }
+                // Socket exists but no server responding - stale, safe to remove
+                std::fs::remove_file(&self.socket_path).ok();
+            } else if metadata.file_type().is_file() {
                 std::fs::remove_file(&self.socket_path).ok();
             }
         }
@@ -327,6 +336,8 @@ async fn handle_request(
             };
 
             // Validate and resolve agent ID
+            // Hold the lock across the entire check+spawn+add to prevent races.
+            // PTY spawn (fork+exec) is fast so this won't block other requests long.
             let mut mgr = manager.lock().await;
             let id = if let Some(custom_name) = name {
                 // Validate custom name - must be non-empty and shell-safe
@@ -340,7 +351,7 @@ async fn handle_request(
                 if custom_name.len() > 64 {
                     return Response::error("agent name must be 64 characters or fewer");
                 }
-                // Check for uniqueness - allow reusing names of exited agents
+                // Check for uniqueness - only allow reusing names of exited agents
                 if let Some(existing) = mgr.get(&custom_name) {
                     if existing.is_running() {
                         return Response::error(format!("agent name already in use: {custom_name}"));
@@ -352,26 +363,17 @@ async fn handle_request(
             } else {
                 mgr.generate_id()
             };
-            drop(mgr); // Release lock before spawning
 
             let spawn_env = pty::SpawnEnv {
                 vars: env_vars,
             };
             match pty::spawn_with_env(&cmd, rows, cols, &spawn_env, cwd.as_deref()) {
                 Ok(pty_process) => {
-                    let mut mgr = manager.lock().await;
-                    // Double-check uniqueness (in case of race) - only block if running
-                    if let Some(existing) = mgr.get(&id) {
-                        if existing.is_running() {
-                            return Response::error(format!("agent name already in use: {id}"));
-                        }
-                        mgr.remove(&id);
-                    }
                     let pid = pty_process.pid.as_raw() as u32;
                     let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols, no_resize);
                     mgr.add(agent);
                     info!(%id, %pid, ?labels, ?limits, "Spawned agent");
-                    
+
                     // Publish spawn event
                     let _ = event_tx.send(Event::AgentSpawned {
                         id: id.clone(),
@@ -379,7 +381,7 @@ async fn handle_request(
                         command: cmd,
                         labels,
                     });
-                    
+
                     Response::Spawned { id, pid }
                 }
                 Err(e) => Response::error(format!("spawn failed: {e}")),
