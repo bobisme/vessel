@@ -212,7 +212,7 @@ impl TmuxView {
         // Dead pane cleanup is handled by the tmux pane-died hook
         // (set up in setup_pane_died_hook), not by a sleep wrapper.
         let tail_cmd = format!(
-            "{} attach --readonly {}",
+            "{} attach --readonly '{}'",
             self.botty_path, agent_id
         );
 

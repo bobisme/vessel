@@ -621,3 +621,185 @@ fn test_wait_combined_conditions() {
     // Clean up
     env.botty().args(["kill", &agent_id]).assert().success();
 }
+
+// ============================================================================
+// wait --exited tests
+// ============================================================================
+
+#[test]
+fn test_wait_exited() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Spawn a short-lived command that exits 0
+    let output = env
+        .botty()
+        .args(["spawn", "--name", "exit-ok", "--", "sh", "-c", "echo hello; exit 0"])
+        .output()
+        .expect("failed to run spawn");
+    assert!(output.status.success());
+
+    // Wait for it to exit
+    env.botty()
+        .args(["wait", "--exited", "exit-ok", "--timeout", "10"])
+        .assert()
+        .success()
+        .code(0);
+}
+
+#[test]
+fn test_wait_exited_nonzero() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Spawn a command that exits with code 42
+    let output = env
+        .botty()
+        .args(["spawn", "--name", "exit-42", "--", "sh", "-c", "exit 42"])
+        .output()
+        .expect("failed to run spawn");
+    assert!(output.status.success());
+
+    // Wait for it to exit - should propagate exit code 42
+    env.botty()
+        .args(["wait", "--exited", "exit-42", "--timeout", "10"])
+        .assert()
+        .failure()
+        .code(42);
+}
+
+#[test]
+fn test_wait_exited_already_exited() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Spawn a very short-lived command
+    let output = env
+        .botty()
+        .args(["spawn", "--name", "already-done", "--", "true"])
+        .output()
+        .expect("failed to run spawn");
+    assert!(output.status.success());
+
+    // Wait a bit so it definitely exits
+    std::thread::sleep(Duration::from_millis(500));
+
+    // wait --exited should return immediately since it already exited
+    env.botty()
+        .args(["wait", "--exited", "already-done", "--timeout", "5"])
+        .assert()
+        .success()
+        .code(0);
+}
+
+#[test]
+fn test_wait_exited_timeout() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Spawn a long-running command
+    let output = env
+        .botty()
+        .args(["spawn", "--name", "long-run", "--", "sleep", "999"])
+        .output()
+        .expect("failed to run spawn");
+    assert!(output.status.success());
+
+    // Wait with a very short timeout - should fail
+    env.botty()
+        .args(["wait", "--exited", "long-run", "--timeout", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("timeout"));
+
+    // Clean up
+    env.botty().args(["kill", "long-run"]).assert().success();
+}
+
+// ============================================================================
+// Slash in agent name tests
+// ============================================================================
+
+#[test]
+fn test_spawn_slash_name() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Spawn with a slash in the name
+    let output = env
+        .botty()
+        .args(["spawn", "--name", "parent/child", "--", "sleep", "30"])
+        .output()
+        .expect("failed to run spawn");
+
+    assert!(output.status.success(), "spawn should succeed");
+    let agent_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert_eq!(agent_id, "parent/child", "should return the slash name");
+
+    // List should show the slash name
+    env.botty()
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("parent/child"));
+
+    // Kill by slash name should work
+    env.botty()
+        .args(["kill", "parent/child"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_spawn_slash_name_invalid() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Leading slash should be rejected
+    env.botty()
+        .args(["spawn", "--name", "/leading", "--", "sleep", "30"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must not start/end with '/'"));
+
+    // Trailing slash should be rejected
+    env.botty()
+        .args(["spawn", "--name", "trailing/", "--", "sleep", "30"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must not start/end with '/'"));
+
+    // Double slash should be rejected
+    env.botty()
+        .args(["spawn", "--name", "a//b", "--", "sleep", "30"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must not start/end with '/' or contain '//'"));
+}
+
+#[test]
+fn test_spawn_multi_level_slash() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    // Multi-level slash names should work
+    let output = env
+        .botty()
+        .args(["spawn", "--name", "a/b/c", "--", "sleep", "30"])
+        .output()
+        .expect("failed to run spawn");
+
+    assert!(output.status.success(), "spawn should succeed");
+    let agent_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert_eq!(agent_id, "a/b/c");
+
+    // Snapshot should work with slash names
+    std::thread::sleep(Duration::from_millis(200));
+    env.botty()
+        .args(["snapshot", "a/b/c"])
+        .assert()
+        .success();
+
+    // Clean up
+    env.botty().args(["kill", "a/b/c"]).assert().success();
+}

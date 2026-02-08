@@ -799,6 +799,7 @@ async fn run_client(
 
         Command::Wait {
             id,
+            exited,
             contains,
             pattern,
             stable,
@@ -809,91 +810,209 @@ async fn run_client(
             use std::time::{Duration, Instant};
 
             let timeout_duration = Duration::from_secs(timeout);
-            let poll_interval = Duration::from_millis(50);
             let deadline = Instant::now() + timeout_duration;
 
-            let mut last_snapshot = String::new();
-            let mut stable_since = Instant::now();
+            if exited {
+                // Event-based approach: wait for agent to exit
+                use botty::protocol::Event;
+                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                use tokio::net::UnixStream;
 
-            loop {
-                if Instant::now() >= deadline {
-                    return Err("timeout waiting for condition".into());
-                }
-
-                let response = client
-                    .request(Request::Snapshot {
-                        id: id.clone(),
-                        strip_colors: true,
-                    })
-                    .await?;
-
-                let snapshot = match response {
-                    Response::Snapshot { content, .. } => content,
+                // First check current state - agent may have already exited
+                let response = client.request(Request::List { labels: vec![] }).await?;
+                let agents = match response {
+                    Response::Agents { agents } => agents,
                     Response::Error { message } => return Err(message.into()),
                     _ => return Err("unexpected response".into()),
                 };
 
-                // Check conditions - all specified conditions must be met (AND logic)
-                let mut all_conditions_met = true;
-                let mut any_condition_specified = false;
-
-                // Check contains condition
-                if let Some(ref needle) = contains {
-                    any_condition_specified = true;
-                    if !snapshot.contains(needle) {
-                        all_conditions_met = false;
-                    }
-                }
-
-                // Check pattern condition
-                if let Some(ref pat) = pattern {
-                    any_condition_specified = true;
-                    // Limit pattern length to mitigate ReDoS
-                    if pat.len() > 1000 {
-                        return Err("regex pattern too long (max 1000 chars)".into());
-                    }
-                    let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
-                    if !re.is_match(&snapshot) {
-                        all_conditions_met = false;
-                    }
-                }
-
-                // Check stable condition (always track stability)
-                let is_stable = if let Some(stable_ms) = stable {
-                    any_condition_specified = true;
-                    let stable_duration = Duration::from_millis(stable_ms);
-                    if snapshot == last_snapshot {
-                        stable_since.elapsed() >= stable_duration
-                    } else {
-                        stable_since = Instant::now();
-                        false
-                    }
-                } else {
-                    // Update stability tracking even if not checking for it
-                    if snapshot != last_snapshot {
-                        stable_since = Instant::now();
-                    }
-                    true // Not checking stability, so treat as satisfied
+                let agent = agents.iter().find(|a| a.id == id);
+                let already_exited = match agent {
+                    Some(a) => a.state == botty::AgentState::Exited,
+                    None => return Err(format!("agent not found: {id}").into()),
                 };
 
-                if !is_stable {
-                    all_conditions_met = false;
-                }
+                let exit_code = if already_exited {
+                    agent.unwrap().exit_code
+                } else {
+                    // Subscribe to events and wait for AgentExited
+                    let stream = UnixStream::connect(&socket_path_ref).await?;
+                    let (reader, mut writer) = stream.into_split();
+                    let mut reader = BufReader::new(reader);
 
-                // If no conditions specified, wait for any output change
-                if !any_condition_specified {
-                    all_conditions_met = !snapshot.is_empty() && snapshot != last_snapshot;
-                }
+                    let events_request = Request::Events {
+                        filter: vec![id.clone()],
+                        include_output: false,
+                    };
+                    let mut json = serde_json::to_string(&events_request)?;
+                    json.push('\n');
+                    writer.write_all(json.as_bytes()).await?;
 
-                if all_conditions_met {
+                    let exit_code;
+                    loop {
+                        if Instant::now() >= deadline {
+                            eprintln!("error: timeout waiting for agent to exit");
+                            std::process::exit(1);
+                        }
+
+                        let remaining = deadline - Instant::now();
+                        let mut line = String::new();
+                        match tokio::time::timeout(remaining, reader.read_line(&mut line)).await {
+                            Ok(Ok(0)) => {
+                                return Err("server closed connection while waiting".into());
+                            }
+                            Ok(Ok(_)) => {
+                                let response: Response = serde_json::from_str(&line)?;
+                                match response {
+                                    Response::Event(Event::AgentExited { id: ref eid, exit_code: ec }) if *eid == id => {
+                                        exit_code = ec;
+                                        break;
+                                    }
+                                    Response::Error { message } => return Err(message.into()),
+                                    _ => {} // Other events, keep waiting
+                                }
+                            }
+                            Ok(Err(e)) => return Err(format!("read error: {e}").into()),
+                            Err(_) => {
+                                eprintln!("error: timeout waiting for agent to exit");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                    exit_code
+                };
+
+                // If other conditions are specified, check the final snapshot
+                let has_other_conditions = contains.is_some() || pattern.is_some() || stable.is_some();
+                if has_other_conditions || print {
+                    let response = client
+                        .request(Request::Snapshot {
+                            id: id.clone(),
+                            strip_colors: true,
+                        })
+                        .await?;
+
+                    let snapshot = match response {
+                        Response::Snapshot { content, .. } => content,
+                        Response::Error { message } => return Err(message.into()),
+                        _ => return Err("unexpected response".into()),
+                    };
+
+                    if let Some(ref needle) = contains {
+                        if !snapshot.contains(needle) {
+                            eprintln!("error: output does not contain: {needle:?}");
+                            std::process::exit(1);
+                        }
+                    }
+
+                    if let Some(ref pat) = pattern {
+                        if pat.len() > 1000 {
+                            return Err("regex pattern too long (max 1000 chars)".into());
+                        }
+                        let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
+                        if !re.is_match(&snapshot) {
+                            eprintln!("error: output does not match pattern: {pat:?}");
+                            std::process::exit(1);
+                        }
+                    }
+
                     if print {
                         println!("{snapshot}");
                     }
-                    break;
                 }
 
-                last_snapshot = snapshot;
-                tokio::time::sleep(poll_interval).await;
+                // Propagate exit code
+                let code = exit_code.unwrap_or(0);
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            } else {
+                // Original snapshot-polling approach
+                let poll_interval = Duration::from_millis(50);
+
+                let mut last_snapshot = String::new();
+                let mut stable_since = Instant::now();
+
+                loop {
+                    if Instant::now() >= deadline {
+                        return Err("timeout waiting for condition".into());
+                    }
+
+                    let response = client
+                        .request(Request::Snapshot {
+                            id: id.clone(),
+                            strip_colors: true,
+                        })
+                        .await?;
+
+                    let snapshot = match response {
+                        Response::Snapshot { content, .. } => content,
+                        Response::Error { message } => return Err(message.into()),
+                        _ => return Err("unexpected response".into()),
+                    };
+
+                    // Check conditions - all specified conditions must be met (AND logic)
+                    let mut all_conditions_met = true;
+                    let mut any_condition_specified = false;
+
+                    // Check contains condition
+                    if let Some(ref needle) = contains {
+                        any_condition_specified = true;
+                        if !snapshot.contains(needle) {
+                            all_conditions_met = false;
+                        }
+                    }
+
+                    // Check pattern condition
+                    if let Some(ref pat) = pattern {
+                        any_condition_specified = true;
+                        // Limit pattern length to mitigate ReDoS
+                        if pat.len() > 1000 {
+                            return Err("regex pattern too long (max 1000 chars)".into());
+                        }
+                        let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
+                        if !re.is_match(&snapshot) {
+                            all_conditions_met = false;
+                        }
+                    }
+
+                    // Check stable condition (always track stability)
+                    let is_stable = if let Some(stable_ms) = stable {
+                        any_condition_specified = true;
+                        let stable_duration = Duration::from_millis(stable_ms);
+                        if snapshot == last_snapshot {
+                            stable_since.elapsed() >= stable_duration
+                        } else {
+                            stable_since = Instant::now();
+                            false
+                        }
+                    } else {
+                        // Update stability tracking even if not checking for it
+                        if snapshot != last_snapshot {
+                            stable_since = Instant::now();
+                        }
+                        true // Not checking stability, so treat as satisfied
+                    };
+
+                    if !is_stable {
+                        all_conditions_met = false;
+                    }
+
+                    // If no conditions specified, wait for any output change
+                    if !any_condition_specified {
+                        all_conditions_met = !snapshot.is_empty() && snapshot != last_snapshot;
+                    }
+
+                    if all_conditions_met {
+                        if print {
+                            println!("{snapshot}");
+                        }
+                        break;
+                    }
+
+                    last_snapshot = snapshot;
+                    tokio::time::sleep(poll_interval).await;
+                }
             }
         }
 

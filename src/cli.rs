@@ -371,9 +371,24 @@ pub enum Command {
     /// Conditions can be combined with AND logic. For example:
     /// `--stable 200 --contains "$ "` waits for the screen to be stable
     /// for 200ms AND contain the prompt.
+    #[command(after_help = "\
+SUBAGENT WORKFLOW:
+  Spawn a child, wait for it to finish, then check its exit code:
+
+    child=$(botty spawn --name parent/child -- my-command --flag)
+    botty wait --exited \"$child\"
+    echo \"Exit code: $?\"
+
+  Combined with output conditions:
+
+    botty wait --exited --contains 'done' --print my-agent")]
     Wait {
         /// Agent ID.
         id: String,
+
+        /// Wait until the agent has exited.
+        #[arg(long)]
+        exited: bool,
 
         /// Wait until output contains this string.
         #[arg(long)]

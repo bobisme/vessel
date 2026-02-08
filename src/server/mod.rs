@@ -345,8 +345,11 @@ async fn handle_request(
                 if custom_name.is_empty() {
                     return Response::error("agent name cannot be empty");
                 }
-                if !custom_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                    return Response::error("agent name must contain only alphanumeric characters, hyphens, and underscores");
+                if !custom_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/') {
+                    return Response::error("agent name must contain only alphanumeric characters, hyphens, underscores, and slashes");
+                }
+                if custom_name.starts_with('/') || custom_name.ends_with('/') || custom_name.contains("//") {
+                    return Response::error("agent name must not start/end with '/' or contain '//'");
                 }
                 if custom_name.len() > 64 {
                     return Response::error("agent name must be 64 characters or fewer");
