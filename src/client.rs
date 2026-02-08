@@ -45,16 +45,20 @@ pub enum ClientError {
 }
 
 /// Get the default socket path for the botty server.
+///
+/// Uses `/run/user/$UID/botty.sock` if the directory exists (regardless of
+/// whether `XDG_RUNTIME_DIR` is set), falling back to `/tmp/botty-$UID.sock`.
+/// This ensures all clients resolve to the same path even when environment
+/// variables differ across contexts (e.g., cron, hooks, direct shell).
 #[must_use]
 pub fn default_socket_path() -> PathBuf {
-    dirs::runtime_dir().map_or_else(
-        || {
-            // Fallback to /tmp/botty-$UID.sock
-            let uid = unsafe { libc::getuid() };
-            PathBuf::from(format!("/tmp/botty-{uid}.sock"))
-        },
-        |runtime_dir| runtime_dir.join("botty.sock"),
-    )
+    let uid = unsafe { libc::getuid() };
+    let runtime_dir = PathBuf::from(format!("/run/user/{uid}"));
+    if runtime_dir.is_dir() {
+        runtime_dir.join("botty.sock")
+    } else {
+        PathBuf::from(format!("/tmp/botty-{uid}.sock"))
+    }
 }
 
 /// Client for the botty server.
