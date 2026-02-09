@@ -1167,6 +1167,11 @@ async fn run_client(
             match response {
                 Response::Ok => {
                     println!("Server shutting down");
+
+                    // Kill tmux session (hardcoded to "botty" for now - see bd-1tr for unique names)
+                    let _ = std::process::Command::new("tmux")
+                        .args(["kill-session", "-t", "botty"])
+                        .status();
                 }
                 Response::Error { message } => {
                     return Err(message.into());
