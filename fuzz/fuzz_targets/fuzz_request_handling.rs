@@ -34,7 +34,19 @@ fuzz_target!(|req: FuzzRequest| {
     // Convert to real Request and serialize/deserialize
     let request = match req {
         FuzzRequest::Spawn { cmd, rows, cols } => {
-            botty::protocol::Request::Spawn { cmd, rows, cols }
+            botty::protocol::Request::Spawn {
+                cmd,
+                rows,
+                cols,
+                name: None,
+                labels: vec![],
+                timeout: None,
+                max_output: None,
+                env: vec![],
+                cwd: None,
+                no_resize: false,
+                record: false,
+            }
         }
         FuzzRequest::Kill { id, signal } => botty::protocol::Request::Kill {
             id: Some(id),

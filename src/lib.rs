@@ -18,7 +18,7 @@ pub mod view;
 pub use attach::{run_attach, AttachConfig, AttachError};
 pub use cli::{parse_key_notation, parse_key_sequence, Cli, Command};
 pub use client::{default_socket_path, Client, ClientError};
-pub use protocol::{AgentInfo, AgentState, DumpFormat, Event, ExitReason, Request, ResourceLimits, Response};
+pub use protocol::{AgentInfo, AgentState, DumpFormat, Event, ExitReason, RecordedCommand, Request, ResourceLimits, Response};
 pub use server::{Server, ServerError};
 pub use testing::{AgentHandle, TestError, TestHarness};
 pub use view::{TmuxView, ViewError, ViewMode};

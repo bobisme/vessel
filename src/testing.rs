@@ -106,6 +106,7 @@ impl TestHarness {
             env: vec![],
             cwd: None,
             no_resize: false,
+            record: false,
         };
 
         let response = self

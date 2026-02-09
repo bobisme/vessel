@@ -309,7 +309,7 @@ async fn handle_request(
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, cwd, no_resize } => {
+        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, cwd, no_resize, record } => {
             if cmd.is_empty() {
                 return Response::error("command is empty");
             }
@@ -373,7 +373,7 @@ async fn handle_request(
             match pty::spawn_with_env(&cmd, rows, cols, &spawn_env, cwd.as_deref()) {
                 Ok(pty_process) => {
                     let pid = pty_process.pid.as_raw() as u32;
-                    let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols, no_resize);
+                    let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols, no_resize, record);
                     mgr.add(agent);
                     info!(%id, %pid, ?labels, ?limits, "Spawned agent");
 
@@ -516,8 +516,16 @@ async fn handle_request(
         }
 
         Request::Send { id, data, newline } => {
-            let mgr = manager.lock().await;
-            if let Some(agent) = mgr.get(&id) {
+            let mut mgr = manager.lock().await;
+            if let Some(agent) = mgr.get_mut(&id) {
+                // Record the command before sending
+                let payload = if newline {
+                    format!("{data}\n")
+                } else {
+                    data.clone()
+                };
+                agent.record_command("send", &payload);
+
                 let mut bytes = data.into_bytes();
                 if newline {
                     bytes.push(b'\n');
@@ -539,8 +547,11 @@ async fn handle_request(
         }
 
         Request::SendBytes { id, data } => {
-            let mgr = manager.lock().await;
-            if let Some(agent) = mgr.get(&id) {
+            let mut mgr = manager.lock().await;
+            if let Some(agent) = mgr.get_mut(&id) {
+                // Record the command before sending
+                agent.record_command("send_bytes", hex::encode(&data));
+
                 let fd = agent.pty.master_fd();
                 // SAFETY: The fd is valid for the lifetime of the agent
                 #[allow(unsafe_code)]
@@ -679,6 +690,22 @@ async fn handle_request(
                     info!(%id, %rows, %cols, "Resized agent");
                 }
                 Response::Ok
+            } else {
+                Response::error(format!("agent not found: {id}"))
+            }
+        }
+
+        Request::GetRecording { id } => {
+            let mgr = manager.lock().await;
+            if let Some(agent) = mgr.get(&id) {
+                if !agent.recording {
+                    Response::error(format!("recording not enabled for agent: {id}"))
+                } else {
+                    Response::Recording {
+                        agent_id: id,
+                        commands: agent.recorded_commands.clone(),
+                    }
+                }
             } else {
                 Response::error(format!("agent not found: {id}"))
             }

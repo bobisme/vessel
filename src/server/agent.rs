@@ -2,7 +2,7 @@
 
 use super::screen::Screen;
 use super::transcript::Transcript;
-use crate::protocol::{ExitReason, ResourceLimits};
+use crate::protocol::{ExitReason, RecordedCommand, ResourceLimits};
 use crate::pty::PtyProcess;
 use std::time::Instant;
 
@@ -48,6 +48,10 @@ pub struct Agent {
     pub screen_cleared_at: Option<Instant>,
     /// Whether this agent is immune to auto-resize from view.
     pub no_resize: bool,
+    /// Whether command recording is enabled for this agent.
+    pub recording: bool,
+    /// Recorded commands (populated when `recording` is true).
+    pub recorded_commands: Vec<RecordedCommand>,
 }
 
 impl Agent {
@@ -62,6 +66,7 @@ impl Agent {
         rows: u16,
         cols: u16,
         no_resize: bool,
+        record: bool,
     ) -> Self {
         // Use max_output limit for transcript size, or default to 1MB
         let transcript_size = limits
@@ -84,6 +89,15 @@ impl Agent {
             sigterm_sent_at: None,
             screen_cleared_at: None,
             no_resize,
+            recording: record,
+            recorded_commands: Vec::new(),
+        }
+    }
+
+    /// Record a command if recording is enabled.
+    pub fn record_command(&mut self, command: impl Into<String>, payload: impl Into<String>) {
+        if self.recording {
+            self.recorded_commands.push(RecordedCommand::new(command, payload));
         }
     }
 

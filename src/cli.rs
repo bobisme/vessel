@@ -165,6 +165,12 @@ pub enum Command {
         #[arg(long)]
         no_resize: bool,
 
+        /// Enable command recording for this agent.
+        /// All send/send-keys commands will be captured with timestamps.
+        /// Retrieve recordings with `botty recording <agent-id>`.
+        #[arg(long)]
+        record: bool,
+
         /// Wait for agent(s) to exit before spawning (can be repeated).
         #[arg(long)]
         after: Vec<String>,
@@ -548,6 +554,16 @@ SUBAGENT WORKFLOW:
         /// Layout mode used by the view session.
         #[arg(long, default_value = "panes")]
         mode: String,
+    },
+
+    /// Get recorded commands for an agent.
+    ///
+    /// Returns a JSON array of commands that were sent to the agent,
+    /// each with a timestamp, command type, and payload.
+    /// Recording must be enabled at spawn time with --record.
+    Recording {
+        /// Agent ID.
+        id: String,
     },
 }
 

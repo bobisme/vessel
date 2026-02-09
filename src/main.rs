@@ -220,6 +220,7 @@ async fn run_doctor(
             env: vec![],
             cwd: None,
             no_resize: false,
+            record: false,
         })
         .await
     {
@@ -298,7 +299,7 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, after, wait_for, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, after, wait_for, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
@@ -311,7 +312,7 @@ async fn run_client(
                 }
             }
 
-            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize };
+            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize, record };
             let response = client.request(request).await?;
 
             match response {
@@ -772,6 +773,24 @@ async fn run_client(
             }
         }
 
+        Command::Recording { id } => {
+            let request = Request::GetRecording { id };
+            let response = client.request(request).await?;
+
+            match response {
+                Response::Recording { agent_id: _, commands } => {
+                    let json = serde_json::to_string_pretty(&commands)?;
+                    println!("{json}");
+                }
+                Response::Error { message } => {
+                    return Err(message.into());
+                }
+                _ => {
+                    return Err("unexpected response".into());
+                }
+            }
+        }
+
         // These commands are handled before this match
         Command::Attach { .. } | Command::Server { .. } | Command::Doctor | Command::Events { .. } | Command::Subscribe { .. } | Command::View { .. } | Command::ResizePanes { .. } => {
             unreachable!("handled above")
@@ -1206,6 +1225,7 @@ async fn run_client(
                 env: vec![],
                 cwd: None,
                 no_resize: false,
+                record: false,
             };
             let response = client.request(request).await?;
 

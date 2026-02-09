@@ -4,6 +4,37 @@
 //! happens over a Unix socket using JSON-serialized Request/Response messages.
 
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// A recorded command sent to an agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordedCommand {
+    /// Unix timestamp in milliseconds when the command was recorded.
+    pub timestamp: u64,
+    /// The type of command ("send", "send_bytes", or "send_keys").
+    pub command: String,
+    /// The payload of the command.
+    /// For "send": the text that was sent.
+    /// For "send_bytes": hex-encoded bytes.
+    /// For "send_keys": the key name.
+    pub payload: String,
+}
+
+impl RecordedCommand {
+    /// Create a new recorded command with the current timestamp.
+    #[must_use]
+    pub fn new(command: impl Into<String>, payload: impl Into<String>) -> Self {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        Self {
+            timestamp,
+            command: command.into(),
+            payload: payload.into(),
+        }
+    }
+}
 
 /// Format for transcript dump output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +84,9 @@ pub enum Request {
         /// Prevent auto-resize from view command.
         #[serde(default)]
         no_resize: bool,
+        /// Enable command recording for this agent.
+        #[serde(default)]
+        record: bool,
     },
 
     /// List all agents (optionally filtered by labels).
@@ -173,6 +207,12 @@ pub enum Request {
         /// displaying old output rendered at wrong size).
         #[serde(default)]
         clear_transcript: bool,
+    },
+
+    /// Get the recorded commands for an agent.
+    GetRecording {
+        /// Agent ID.
+        id: String,
     },
 }
 
@@ -332,6 +372,14 @@ pub enum Response {
 
     /// Server event (sent during event subscription).
     Event(Event),
+
+    /// Recorded commands for an agent.
+    Recording {
+        /// The agent ID.
+        agent_id: String,
+        /// The recorded commands.
+        commands: Vec<RecordedCommand>,
+    },
 }
 
 /// Reason attach mode ended.
@@ -450,6 +498,7 @@ mod tests {
                 env: vec![],
                 cwd: None,
                 no_resize: false,
+                record: false,
             },
             Request::List { labels: vec![] },
             Request::Kill {
@@ -488,6 +537,9 @@ mod tests {
                 rows: 40,
                 cols: 120,
                 clear_transcript: false,
+            },
+            Request::GetRecording {
+                id: "test-agent".into(),
             },
         ];
 
@@ -549,6 +601,16 @@ mod tests {
                 id: "test-agent".into(),
                 exit_code: Some(0),
             }),
+            Response::Recording {
+                agent_id: "test-agent".into(),
+                commands: vec![
+                    RecordedCommand {
+                        timestamp: 1706140800000,
+                        command: "send".into(),
+                        payload: "hello\n".into(),
+                    },
+                ],
+            },
         ];
 
         for resp in responses {
