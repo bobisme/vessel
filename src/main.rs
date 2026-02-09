@@ -1,6 +1,6 @@
 //! botty — PTY-based Agent Runtime
 
-use botty::{default_socket_path, run_attach, AttachConfig, Cli, Client, Command, DumpFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
+use botty::{default_socket_path, json_envelope, resolve_format, run_attach, text_record, AttachConfig, Cli, Client, Command, DumpFormat, OutputFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
 use clap::Parser;
 use std::io::Write;
 use tracing::error;
@@ -429,9 +429,6 @@ async fn run_client(
         }
 
         Command::List { all, label, format, json } => {
-            // --json is deprecated shorthand for --format json
-            let format = if json { "json".to_string() } else { format };
-
             let response = client.request(Request::List { labels: label }).await?;
 
             match response {
@@ -446,7 +443,11 @@ async fn run_client(
                             .collect()
                     };
 
-                    // Build full JSON objects (used by json and toon formats)
+                    // Determine output format (handle deprecated --json flag)
+                    let format_flag = if json { Some("json") } else { Some(format.as_str()) };
+                    let output_format = resolve_format(format_flag);
+
+                    // Build full JSON objects for JSON output
                     let build_full_json = |agents: &[botty::AgentInfo]| -> Vec<serde_json::Value> {
                         agents
                             .iter()
@@ -484,11 +485,44 @@ async fn run_client(
                             .collect()
                     };
 
-                    match format.as_str() {
-                        "json" => {
-                            println!("{}", serde_json::to_string(&build_full_json(&agents))?);
+                    match output_format {
+                        OutputFormat::Json => {
+                            let agents_json = serde_json::to_value(build_full_json(&agents))?;
+                            let advice = if agents.is_empty() {
+                                vec!["botty spawn -- <command>".to_string()]
+                            } else {
+                                vec![
+                                    "botty kill <id>".to_string(),
+                                    "botty send <id> \"<text>\"".to_string(),
+                                    "botty snapshot <id>".to_string(),
+                                ]
+                            };
+                            let output = json_envelope("agents", agents_json, advice);
+                            println!("{}", serde_json::to_string(&output)?);
                         }
-                        "text" => {
+                        OutputFormat::Text => {
+                            // ID-first compact text output with two-space delimiters
+                            for a in &agents {
+                                let state = match a.state {
+                                    botty::AgentState::Running => "running",
+                                    botty::AgentState::Exited => "exited",
+                                };
+                                let cmd = a.command.join(" ");
+                                let labels_str = if a.labels.is_empty() {
+                                    String::new()
+                                } else {
+                                    a.labels.join(",")
+                                };
+                                let line = if labels_str.is_empty() {
+                                    text_record(&[&a.id, state, &cmd])
+                                } else {
+                                    text_record(&[&a.id, state, &cmd, &labels_str])
+                                };
+                                println!("{}", line);
+                            }
+                        }
+                        OutputFormat::Pretty => {
+                            // Human-friendly table with headers and aligned columns
                             if agents.is_empty() {
                                 if all {
                                     println!("(no agents)");
@@ -496,7 +530,6 @@ async fn run_client(
                                     println!("(no agents currently active)");
                                 }
                             } else {
-                                // Columnar text output
                                 println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATE", "COMMAND");
                                 for a in &agents {
                                     let state = match a.state {
@@ -511,21 +544,6 @@ async fn run_client(
                                     };
                                     println!("{:<20} {:<8} {:<10} {}{}", a.id, a.pid, state, cmd, labels);
                                 }
-                            }
-                        }
-                        _ => {
-                            // Default: TOON format (token-efficient for LLMs)
-                            if agents.is_empty() {
-                                if all {
-                                    println!("(no agents)");
-                                } else {
-                                    println!("(no agents currently active)");
-                                }
-                            } else {
-                                let json_data = serde_json::json!({ "agents": build_full_json(&agents) });
-                                let toon = toon_format::encode(&json_data, &toon_format::EncodeOptions::default())
-                                    .unwrap_or_else(|_| format!("{json_data:?}"));
-                                println!("{toon}");
                             }
                         }
                     }

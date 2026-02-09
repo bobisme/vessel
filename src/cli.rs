@@ -195,8 +195,8 @@ pub enum Command {
         #[arg(long, short)]
         label: Vec<String>,
 
-        /// Output format: toon (default, token-optimized), json, or text.
-        #[arg(long, default_value = "toon")]
+        /// Output format: text, json, or pretty.
+        #[arg(long, default_value = "pretty")]
         format: String,
 
         /// Output in JSON format (for piping to jq). Deprecated: use --format json.
