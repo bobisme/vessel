@@ -1,6 +1,6 @@
 //! botty — PTY-based Agent Runtime
 
-use botty::{default_socket_path, run_attach, AttachConfig, Cli, Client, Command, DumpFormat, Request, Response, Server, TmuxView, ViewError};
+use botty::{default_socket_path, run_attach, AttachConfig, Cli, Client, Command, DumpFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
 use clap::Parser;
 use std::io::Write;
 use tracing::error;
@@ -89,6 +89,105 @@ fn disable_output_postprocessing() -> Option<RawOutputGuard> {
         original_termios,
         fd,
     })
+}
+
+/// Shell-escape a string for use in single quotes.
+///
+/// Wraps the string in single quotes and escapes any embedded single quotes
+/// using the `'\''` idiom (end quote, escaped quote, start quote).
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Compute the delay in seconds between two timestamps (milliseconds).
+///
+/// Clamps the result to the range [0.1, 2.0] seconds. Delays below 0.1s
+/// are bumped up to avoid races, and delays above 2.0s are capped since
+/// longer gaps are typically idle time.
+fn compute_delay(prev_ms: u64, curr_ms: u64) -> f64 {
+    let delta_ms = curr_ms.saturating_sub(prev_ms);
+    let secs = delta_ms as f64 / 1000.0;
+    secs.clamp(0.1, 2.0)
+}
+
+/// Generate an executable bash test script from a sequence of recorded commands.
+fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String {
+    use std::fmt::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let now = format!("unix:{now_secs}");
+
+    let mut script = String::new();
+    writeln!(script, "#!/bin/bash").unwrap();
+    writeln!(script, "# Auto-generated test script from botty recording").unwrap();
+    writeln!(script, "# Agent: {agent_id}").unwrap();
+    writeln!(script, "# Generated: {now}").unwrap();
+    writeln!(script, "# Commands: {}", commands.len()).unwrap();
+    writeln!(script, "set -e").unwrap();
+    writeln!(script).unwrap();
+    writeln!(script, "# Spawn the agent").unwrap();
+    writeln!(script, "# TODO: Replace with the actual command that was used to spawn the agent").unwrap();
+    writeln!(script, "AGENT=$(botty spawn --record -- echo 'replace with original command')").unwrap();
+    writeln!(script).unwrap();
+    writeln!(script, "# Cleanup on exit").unwrap();
+    writeln!(script, "cleanup() {{ botty kill \"$AGENT\" 2>/dev/null || true; }}").unwrap();
+    writeln!(script, "trap cleanup EXIT").unwrap();
+    writeln!(script).unwrap();
+    writeln!(script, "# Wait for agent to be ready").unwrap();
+    writeln!(script, "sleep 0.5").unwrap();
+
+    for (i, cmd) in commands.iter().enumerate() {
+        writeln!(script).unwrap();
+
+        // Compute delay from previous command
+        if i > 0 {
+            let delay = compute_delay(commands[i - 1].timestamp, cmd.timestamp);
+            writeln!(script, "sleep {delay:.1}").unwrap();
+        }
+
+        match cmd.command.as_str() {
+            "send" => {
+                // The payload may contain a trailing newline if --newline was used.
+                // Detect that and use the -n flag accordingly.
+                let (text, use_newline) = if let Some(stripped) = cmd.payload.strip_suffix('\n') {
+                    (stripped, true)
+                } else {
+                    (cmd.payload.as_str(), false)
+                };
+
+                let escaped = shell_escape(text);
+                if use_newline {
+                    writeln!(script, "# Command {}: send text (with newline)", i + 1).unwrap();
+                    writeln!(script, "botty send -n \"$AGENT\" {escaped}").unwrap();
+                } else {
+                    writeln!(script, "# Command {}: send text", i + 1).unwrap();
+                    writeln!(script, "botty send \"$AGENT\" {escaped}").unwrap();
+                }
+            }
+            "send_bytes" => {
+                writeln!(script, "# Command {}: send raw bytes", i + 1).unwrap();
+                writeln!(script, "botty send-bytes \"$AGENT\" {}", cmd.payload).unwrap();
+            }
+            "send_keys" => {
+                let escaped = shell_escape(&cmd.payload);
+                writeln!(script, "# Command {}: send key", i + 1).unwrap();
+                writeln!(script, "botty send-keys \"$AGENT\" {escaped}").unwrap();
+            }
+            other => {
+                writeln!(script, "# Command {}: unknown command type '{other}' — skipped", i + 1).unwrap();
+            }
+        }
+    }
+
+    writeln!(script).unwrap();
+    writeln!(script, "# Cleanup is handled by the EXIT trap").unwrap();
+    writeln!(script, "echo 'Test passed!'").unwrap();
+
+    script
 }
 
 #[tokio::main]
@@ -781,6 +880,24 @@ async fn run_client(
                 Response::Recording { agent_id: _, commands } => {
                     let json = serde_json::to_string_pretty(&commands)?;
                     println!("{json}");
+                }
+                Response::Error { message } => {
+                    return Err(message.into());
+                }
+                _ => {
+                    return Err("unexpected response".into());
+                }
+            }
+        }
+
+        Command::GenTest { id } => {
+            let request = Request::GetRecording { id: id.clone() };
+            let response = client.request(request).await?;
+
+            match response {
+                Response::Recording { agent_id, commands } => {
+                    let script = generate_test_script(&agent_id, &commands);
+                    print!("{script}");
                 }
                 Response::Error { message } => {
                     return Err(message.into());
@@ -2401,4 +2518,184 @@ async fn run_resize_panes_command(
     // replay the (now stale) initial screen render.
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shell_escape_simple() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn test_shell_escape_with_single_quotes() {
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn test_shell_escape_empty() {
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn test_shell_escape_special_chars() {
+        assert_eq!(shell_escape("hello world $VAR"), "'hello world $VAR'");
+    }
+
+    #[test]
+    fn test_compute_delay_normal() {
+        // 500ms gap -> 0.5s
+        let delay = compute_delay(1000, 1500);
+        assert!((delay - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_delay_capped_at_max() {
+        // 10s gap -> capped at 2.0s
+        let delay = compute_delay(1000, 11_000);
+        assert!((delay - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_delay_minimum() {
+        // 10ms gap -> bumped to 0.1s
+        let delay = compute_delay(1000, 1010);
+        assert!((delay - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_delay_zero_diff() {
+        // Same timestamp -> minimum 0.1s
+        let delay = compute_delay(1000, 1000);
+        assert!((delay - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_compute_delay_underflow() {
+        // curr < prev (shouldn't happen, but handle gracefully)
+        let delay = compute_delay(2000, 1000);
+        assert!((delay - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_generate_test_script_empty() {
+        let script = generate_test_script("test-agent", &[]);
+        assert!(script.contains("#!/bin/bash"));
+        assert!(script.contains("# Agent: test-agent"));
+        assert!(script.contains("# Commands: 0"));
+        assert!(script.contains("set -e"));
+        assert!(script.contains("trap cleanup EXIT"));
+        assert!(script.contains("Test passed!"));
+    }
+
+    #[test]
+    fn test_generate_test_script_send_with_newline() {
+        let commands = vec![RecordedCommand {
+            timestamp: 1000,
+            command: "send".into(),
+            payload: "hello\n".into(),
+        }];
+        let script = generate_test_script("agent-1", &commands);
+        assert!(script.contains("botty send -n \"$AGENT\" 'hello'"));
+        assert!(script.contains("# Command 1: send text (with newline)"));
+    }
+
+    #[test]
+    fn test_generate_test_script_send_without_newline() {
+        let commands = vec![RecordedCommand {
+            timestamp: 1000,
+            command: "send".into(),
+            payload: "hello".into(),
+        }];
+        let script = generate_test_script("agent-1", &commands);
+        assert!(script.contains("botty send \"$AGENT\" 'hello'"));
+        assert!(script.contains("# Command 1: send text"));
+        assert!(!script.contains("(with newline)"));
+    }
+
+    #[test]
+    fn test_generate_test_script_send_bytes() {
+        let commands = vec![RecordedCommand {
+            timestamp: 1000,
+            command: "send_bytes".into(),
+            payload: "1b5b41".into(),
+        }];
+        let script = generate_test_script("agent-1", &commands);
+        assert!(script.contains("botty send-bytes \"$AGENT\" 1b5b41"));
+    }
+
+    #[test]
+    fn test_generate_test_script_send_keys() {
+        let commands = vec![RecordedCommand {
+            timestamp: 1000,
+            command: "send_keys".into(),
+            payload: "enter".into(),
+        }];
+        let script = generate_test_script("agent-1", &commands);
+        assert!(script.contains("botty send-keys \"$AGENT\" 'enter'"));
+    }
+
+    #[test]
+    fn test_generate_test_script_timing() {
+        let commands = vec![
+            RecordedCommand {
+                timestamp: 1000,
+                command: "send".into(),
+                payload: "first\n".into(),
+            },
+            RecordedCommand {
+                timestamp: 1500,
+                command: "send".into(),
+                payload: "second\n".into(),
+            },
+        ];
+        let script = generate_test_script("agent-1", &commands);
+        // Second command should have a 0.5s delay
+        assert!(script.contains("sleep 0.5"));
+    }
+
+    #[test]
+    fn test_generate_test_script_timing_capped() {
+        let commands = vec![
+            RecordedCommand {
+                timestamp: 1000,
+                command: "send".into(),
+                payload: "first\n".into(),
+            },
+            RecordedCommand {
+                timestamp: 60_000,
+                command: "send".into(),
+                payload: "second\n".into(),
+            },
+        ];
+        let script = generate_test_script("agent-1", &commands);
+        // Large gap should be capped at 2.0s
+        assert!(script.contains("sleep 2.0"));
+    }
+
+    #[test]
+    fn test_generate_test_script_unknown_command() {
+        let commands = vec![RecordedCommand {
+            timestamp: 1000,
+            command: "unknown_type".into(),
+            payload: "data".into(),
+        }];
+        let script = generate_test_script("agent-1", &commands);
+        assert!(script.contains("unknown command type 'unknown_type'"));
+        assert!(script.contains("skipped"));
+    }
+
+    #[test]
+    fn test_generate_test_script_shell_escape_in_payload() {
+        let commands = vec![RecordedCommand {
+            timestamp: 1000,
+            command: "send".into(),
+            payload: "echo 'hello world'\n".into(),
+        }];
+        let script = generate_test_script("agent-1", &commands);
+        // Single quotes in payload should be escaped
+        assert!(script.contains("'echo '\\''hello world'\\'''"));
+    }
 }

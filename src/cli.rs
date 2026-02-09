@@ -565,6 +565,17 @@ SUBAGENT WORKFLOW:
         /// Agent ID.
         id: String,
     },
+
+    /// Generate a test script from a recorded agent session.
+    ///
+    /// Reads an agent's recording and outputs an executable bash script
+    /// that replays the recorded commands. Timing delays are derived from
+    /// recording timestamps (capped at 2s). Redirect output to a file:
+    ///   botty gen-test <agent-id> > test.sh && chmod +x test.sh
+    GenTest {
+        /// Agent ID.
+        id: String,
+    },
 }
 
 #[cfg(test)]
