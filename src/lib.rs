@@ -9,6 +9,7 @@
 pub mod attach;
 pub mod cli;
 pub mod client;
+pub mod output;
 pub mod protocol;
 pub mod pty;
 pub mod server;
@@ -18,6 +19,7 @@ pub mod view;
 pub use attach::{run_attach, AttachConfig, AttachError};
 pub use cli::{parse_key_notation, parse_key_sequence, Cli, Command};
 pub use client::{default_socket_path, Client, ClientError};
+pub use output::{json_envelope, resolve_format, text_record, OutputFormat};
 pub use protocol::{AgentInfo, AgentState, DumpFormat, Event, ExitReason, RecordedCommand, Request, ResourceLimits, Response};
 pub use server::{Server, ServerError};
 pub use testing::{AgentHandle, TestError, TestHarness};
