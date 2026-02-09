@@ -522,36 +522,44 @@ impl TmuxView {
                     return Err(ViewError::TmuxFailed("failed to show placeholder".into()));
                 }
 
-                // Clear the @agent_id so it's not confused with a real agent
+                // Clear agent metadata so stale info doesn't show in border
+                let session_window = format!("{}:agents", self.session_name);
                 let _ = Command::new("tmux")
                     .args([
-                        "set-option",
-                        "-p",
-                        "-t",
-                        &format!("{}:agents", self.session_name),
-                        "@agent_id",
-                        "",
+                        "set-option", "-p", "-t", &session_window,
+                        "@agent_id", "",
+                    ])
+                    .status();
+                let _ = Command::new("tmux")
+                    .args([
+                        "set-option", "-p", "-t", &session_window,
+                        "@agent_command", "",
+                    ])
+                    .status();
+                let _ = Command::new("tmux")
+                    .args([
+                        "set-option", "-p", "-t", &session_window,
+                        "@agent_labels", "",
                     ])
                     .status();
 
                 // Set pane title
                 let _ = Command::new("tmux")
                     .args([
-                        "select-pane",
-                        "-t",
-                        &format!("{}:agents", self.session_name),
-                        "-T",
-                        "waiting",
+                        "select-pane", "-t", &session_window,
+                        "-T", "waiting",
                     ])
                     .status();
             }
             ViewMode::Windows => {
+                let session_window = format!("{}:agents", self.session_name);
+
                 // Respawn the agents window with placeholder
                 let status = Command::new("tmux")
                     .args([
                         "respawn-window",
                         "-t",
-                        &format!("{}:agents", self.session_name),
+                        &session_window,
                         "-k",
                         "bash",
                         "-c",
@@ -563,12 +571,32 @@ impl TmuxView {
                     return Err(ViewError::TmuxFailed("failed to show placeholder".into()));
                 }
 
+                // Clear agent metadata so stale info doesn't show in border
+                let _ = Command::new("tmux")
+                    .args([
+                        "set-option", "-p", "-t", &session_window,
+                        "@agent_id", "",
+                    ])
+                    .status();
+                let _ = Command::new("tmux")
+                    .args([
+                        "set-option", "-p", "-t", &session_window,
+                        "@agent_command", "",
+                    ])
+                    .status();
+                let _ = Command::new("tmux")
+                    .args([
+                        "set-option", "-p", "-t", &session_window,
+                        "@agent_labels", "",
+                    ])
+                    .status();
+
                 // Rename window
                 let _ = Command::new("tmux")
                     .args([
                         "rename-window",
                         "-t",
-                        &format!("{}:agents", self.session_name),
+                        &session_window,
                         "waiting",
                     ])
                     .status();
