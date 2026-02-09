@@ -180,6 +180,10 @@ pub enum Command {
         #[arg(long)]
         wait_for: Vec<String>,
 
+        /// Output format: text (id only), json (envelope), or pretty (human-readable).
+        #[arg(long)]
+        format: Option<String>,
+
         /// Command to run (after --).
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
@@ -224,6 +228,10 @@ pub enum Command {
         /// Kill agents whose command contains this substring (e.g., --proc htop).
         #[arg(long, short)]
         proc: Option<String>,
+
+        /// Output format: text, json, or pretty.
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Send a Unix signal to an agent.
@@ -264,6 +272,10 @@ pub enum Command {
         /// Append a newline after the text (simulates pressing Enter).
         #[arg(short = 'n', long)]
         newline: bool,
+
+        /// Output format: text, json, or pretty.
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Send raw bytes to an agent.
@@ -273,6 +285,10 @@ pub enum Command {
 
         /// Hex-encoded bytes (e.g., "1b5b41" for up arrow).
         hex: String,
+
+        /// Output format: text, json, or pretty.
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Send named key sequences to an agent.
@@ -293,6 +309,10 @@ pub enum Command {
         /// - Function: f1, f2, f3, f4
         /// - Single chars: a, b, x, etc.
         keys: Vec<String>,
+
+        /// Output format: text, json, or pretty.
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Tail agent output.
@@ -564,6 +584,10 @@ SUBAGENT WORKFLOW:
     Recording {
         /// Agent ID.
         id: String,
+
+        /// Output format: text (one-line records), json (envelope), or pretty (formatted JSON).
+        #[arg(long)]
+        format: Option<String>,
     },
 
     /// Generate a test script from a recorded agent session.

@@ -2,6 +2,7 @@
 
 use botty::{default_socket_path, json_envelope, resolve_format, run_attach, text_record, AttachConfig, Cli, Client, Command, DumpFormat, OutputFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
 use clap::Parser;
+use serde_json::json;
 use std::io::Write;
 use tracing::error;
 use tracing_subscriber::EnvFilter;
@@ -398,7 +399,7 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, after, wait_for, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, after, wait_for, format, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
@@ -416,7 +417,31 @@ async fn run_client(
 
             match response {
                 Response::Spawned { id, pid } => {
-                    println!("{id}");
+                    let fmt = resolve_format(format.as_deref());
+                    match fmt {
+                        OutputFormat::Text => {
+                            // Text output: just the ID (for agents parsing this)
+                            println!("{id}");
+                        }
+                        OutputFormat::Json => {
+                            // JSON envelope with advice
+                            let envelope = json_envelope(
+                                "agent",
+                                json!({"id": id, "pid": pid}),
+                                vec![
+                                    format!("botty send {id} \"<text>\""),
+                                    format!("botty attach {id}"),
+                                    format!("botty kill {id}"),
+                                ],
+                            );
+                            println!("{}", serde_json::to_string(&envelope)?);
+                        }
+                        OutputFormat::Pretty => {
+                            // Human-friendly output with suggestions
+                            println!("Spawned: {id} (pid {pid})");
+                            println!("Next: botty send {id} \"<text>\"");
+                        }
+                    }
                     tracing::debug!("Spawned agent {id} (pid {pid})");
                 }
                 Response::Error { message } => {
@@ -557,7 +582,7 @@ async fn run_client(
             }
         }
 
-        Command::Kill { id, label, all, force, proc } => {
+        Command::Kill { id, label, all, force, proc, format } => {
             // Must specify either id, label, proc, or all
             if id.is_none() && label.is_empty() && !all && proc.is_none() {
                 return Err("must specify agent ID, --label, --proc, or --all".into());
@@ -567,12 +592,41 @@ async fn run_client(
                 return Err("--all cannot be combined with agent ID, --label, or --proc".into());
             }
             let signal = if force { 9 } else { 15 }; // SIGKILL or SIGTERM (default)
-            let request = Request::Kill { id, labels: label, all, signal, proc_filter: proc };
+            let request = Request::Kill { id: id.clone(), labels: label, all, signal, proc_filter: proc };
             let response = client.request(request).await?;
 
             match response {
                 Response::Ok => {
-                    println!("Signal sent");
+                    let fmt = resolve_format(format.as_deref());
+                    match fmt {
+                        OutputFormat::Text => {
+                            // Keep backward-compatible output
+                            println!("Signal sent");
+                        }
+                        OutputFormat::Json => {
+                            // JSON envelope with advice
+                            let data = if let Some(agent_id) = id {
+                                json!({"status": "ok", "id": agent_id})
+                            } else {
+                                json!({"status": "ok"})
+                            };
+                            let envelope = json_envelope(
+                                "result",
+                                data,
+                                vec!["botty list".to_string()],
+                            );
+                            println!("{}", serde_json::to_string(&envelope)?);
+                        }
+                        OutputFormat::Pretty => {
+                            // Human-friendly output
+                            if let Some(agent_id) = id {
+                                println!("Killed: {agent_id}");
+                            } else {
+                                println!("Signal sent");
+                            }
+                            println!("Next: botty list");
+                        }
+                    }
                 }
                 Response::Error { message } => {
                     // Make kill idempotent: exit 0 when agent/agents not found
@@ -621,16 +675,36 @@ async fn run_client(
             id,
             text,
             newline,
+            format,
         } => {
             let request = Request::Send {
-                id,
+                id: id.clone(),
                 data: text,
                 newline,
             };
             let response = client.request(request).await?;
 
             match response {
-                Response::Ok => {}
+                Response::Ok => {
+                    let fmt = resolve_format(format.as_deref());
+                    match fmt {
+                        OutputFormat::Text => {
+                            // Keep text/pretty silent for fire-and-forget commands
+                        }
+                        OutputFormat::Json => {
+                            // JSON envelope for programmatic use
+                            let envelope = json_envelope(
+                                "result",
+                                json!({"status": "ok"}),
+                                vec![format!("botty snapshot {id}")],
+                            );
+                            println!("{}", serde_json::to_string(&envelope)?);
+                        }
+                        OutputFormat::Pretty => {
+                            // Keep quiet for human use
+                        }
+                    }
+                }
                 Response::Error { message } => {
                     return Err(message.into());
                 }
@@ -640,13 +714,32 @@ async fn run_client(
             }
         }
 
-        Command::SendBytes { id, hex } => {
+        Command::SendBytes { id, hex, format } => {
             let data = hex::decode(&hex).map_err(|e| format!("invalid hex: {e}"))?;
-            let request = Request::SendBytes { id, data };
+            let request = Request::SendBytes { id: id.clone(), data };
             let response = client.request(request).await?;
 
             match response {
-                Response::Ok => {}
+                Response::Ok => {
+                    let fmt = resolve_format(format.as_deref());
+                    match fmt {
+                        OutputFormat::Text => {
+                            // Keep text/pretty silent for fire-and-forget commands
+                        }
+                        OutputFormat::Json => {
+                            // JSON envelope for programmatic use
+                            let envelope = json_envelope(
+                                "result",
+                                json!({"status": "ok"}),
+                                vec![format!("botty snapshot {id}")],
+                            );
+                            println!("{}", serde_json::to_string(&envelope)?);
+                        }
+                        OutputFormat::Pretty => {
+                            // Keep quiet for human use
+                        }
+                    }
+                }
                 Response::Error { message } => {
                     return Err(message.into());
                 }
@@ -656,7 +749,7 @@ async fn run_client(
             }
         }
 
-        Command::SendKeys { id, keys } => {
+        Command::SendKeys { id, keys, format } => {
             use botty::parse_key_sequence;
             for key in keys {
                 let data = parse_key_sequence(&key)
@@ -672,6 +765,25 @@ async fn run_client(
                     _ => {
                         return Err("unexpected response".into());
                     }
+                }
+            }
+            // Output after all keys are sent
+            let fmt = resolve_format(format.as_deref());
+            match fmt {
+                OutputFormat::Text => {
+                    // Keep text/pretty silent for fire-and-forget commands
+                }
+                OutputFormat::Json => {
+                    // JSON envelope for programmatic use
+                    let envelope = json_envelope(
+                        "result",
+                        json!({"status": "ok"}),
+                        vec![format!("botty snapshot {id}")],
+                    );
+                    println!("{}", serde_json::to_string(&envelope)?);
+                }
+                OutputFormat::Pretty => {
+                    // Keep quiet for human use
                 }
             }
         }
@@ -890,14 +1002,39 @@ async fn run_client(
             }
         }
 
-        Command::Recording { id } => {
-            let request = Request::GetRecording { id };
+        Command::Recording { id, format } => {
+            let request = Request::GetRecording { id: id.clone() };
             let response = client.request(request).await?;
 
             match response {
-                Response::Recording { agent_id: _, commands } => {
-                    let json = serde_json::to_string_pretty(&commands)?;
-                    println!("{json}");
+                Response::Recording { agent_id, commands } => {
+                    let fmt = resolve_format(format.as_deref());
+                    match fmt {
+                        OutputFormat::Text => {
+                            // Text output: one line per command (timestamp, command type, payload)
+                            for cmd in &commands {
+                                println!("{}", text_record(&[
+                                    &cmd.timestamp.to_string(),
+                                    &cmd.command,
+                                    &cmd.payload
+                                ]));
+                            }
+                        }
+                        OutputFormat::Json => {
+                            // JSON envelope with advice
+                            let envelope = json_envelope(
+                                "recording",
+                                json!({"agent_id": agent_id, "commands": commands}),
+                                vec![format!("botty gen-test {id}")],
+                            );
+                            println!("{}", serde_json::to_string(&envelope)?);
+                        }
+                        OutputFormat::Pretty => {
+                            // Pretty-printed JSON (current behavior)
+                            let json = serde_json::to_string_pretty(&commands)?;
+                            println!("{json}");
+                        }
+                    }
                 }
                 Response::Error { message } => {
                     return Err(message.into());
