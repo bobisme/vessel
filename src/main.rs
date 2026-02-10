@@ -835,7 +835,7 @@ async fn run_client(
                         .await?;
 
                     match response {
-                        Response::Output { data } => {
+                        Response::Output { data, .. } => {
                             std::io::stdout().write_all(&data)?;
                             std::io::stdout().flush()?;
                             last_len = data.len();
@@ -859,7 +859,7 @@ async fn run_client(
                         .await?;
 
                     match response {
-                        Response::Output { data } => {
+                        Response::Output { data, exited } => {
                             if data.len() < last_len {
                                 // Transcript shrank (cleared or ring buffer wrapped)
                                 // Just reset our position - TUI programs will redraw
@@ -872,6 +872,10 @@ async fn run_client(
                                 std::io::stdout().write_all(&output)?;
                                 std::io::stdout().flush()?;
                                 last_len = data.len();
+                            }
+
+                            if exited {
+                                break;
                             }
                         }
                         Response::Error { message } => {
@@ -898,7 +902,7 @@ async fn run_client(
                 let response = client.request(request).await?;
 
                 match response {
-                    Response::Output { data } => {
+                    Response::Output { data, .. } => {
                         let output = process_output(&data, raw);
                         std::io::stdout().write_all(&output)?;
                         std::io::stdout().flush()?;
@@ -922,7 +926,7 @@ async fn run_client(
             let response = client.request(request).await?;
 
             match response {
-                Response::Output { data } => {
+                Response::Output { data, .. } => {
                     std::io::stdout().write_all(&data)?;
                     std::io::stdout().flush()?;
                 }

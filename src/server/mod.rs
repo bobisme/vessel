@@ -575,7 +575,8 @@ async fn handle_request(
             if let Some(agent) = mgr.get(&id) {
                 // Return full transcript - client handles offset tracking
                 let data = agent.transcript.all_bytes();
-                Response::Output { data }
+                let exited = !agent.is_running();
+                Response::Output { data, exited }
             } else {
                 Response::error(format!("agent not found: {id}"))
             }
@@ -609,7 +610,8 @@ async fn handle_request(
                     DumpFormat::Jsonl => Response::Transcript { entries },
                     DumpFormat::Text => {
                         let data: Vec<u8> = entries.iter().flat_map(|e| e.data.clone()).collect();
-                        Response::Output { data }
+                        let exited = !agent.is_running();
+                        Response::Output { data, exited }
                     }
                 }
             } else {

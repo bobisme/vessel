@@ -401,7 +401,7 @@ async fn test_transcript_tail() {
         .expect("tail failed");
 
     match response {
-        Response::Output { data } => {
+        Response::Output { data, .. } => {
             let text = String::from_utf8_lossy(&data);
             assert!(text.contains("LINE_ONE"), "should contain LINE_ONE: {}", text);
             assert!(text.contains("LINE_TWO"), "should contain LINE_TWO: {}", text);

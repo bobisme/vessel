@@ -319,6 +319,9 @@ pub enum Response {
         /// Output data (base64 encoded in JSON).
         #[serde(with = "base64_bytes")]
         data: Vec<u8>,
+        /// Whether the agent has exited (used by tail --follow to know when to stop).
+        #[serde(default)]
+        exited: bool,
     },
 
     /// Transcript dump (for dump command).
@@ -580,6 +583,7 @@ mod tests {
             },
             Response::Output {
                 data: b"hello world\n".to_vec(),
+                exited: false,
             },
             Response::Snapshot {
                 content: "$ echo hello\nhello\n$ ".into(),
