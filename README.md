@@ -1,173 +1,204 @@
 # botty
 
-A PTY-based agent runtime for spawning, managing, and observing terminal
-processes over a Unix socket.
+`botty` is a PTY-based runtime for spawning, controlling, and observing interactive terminal agents over a Unix socket.
 
-**For:** AI agent orchestrators, test harnesses, and automation tools that need
-to control interactive terminal programs programmatically.
-**Not for:** general-purpose process supervisors or container runtimes.
+It is designed for AI orchestrators, test harnesses, and automation systems that need real terminal semantics (not just stdout pipes).
 
-## Screenshot
+## What botty is (and is not)
 
-![botty view showing multiple agents in tmux](images/screenshot.png)
+- **Is:** local control plane for interactive worker processes (`spawn`, `send`, `wait`, `snapshot`, `events`, `attach`, `view`).
+- **Is:** good for multi-agent workflows, TUI testing, and reproducible terminal automation.
+- **Is not:** container runtime, distributed scheduler, or durable job queue.
 
-## Commands
+## Requirements
 
-```bash
-# Spawn an agent and interact with it
-botty spawn --name my-shell -- bash
-botty send my-shell "echo hello" --newline  # -n to append newline (press Enter)
-botty snapshot my-shell
-
-# Kill agents by name, label, or command
-botty kill my-shell
-botty kill --label batch-1
-botty kill --proc htop
-
-# Watch everything in a tmux dashboard
-botty view
-```
-
-## Status
-
-**Beta.** API is stabilizing but may change between minor versions. Linux only.
-The server auto-starts on first use and communicates over a Unix socket
-(`$XDG_RUNTIME_DIR/botty/botty.sock` by default).
-
-## Non-Goals
-
-- **Not a container runtime.** No cgroups, namespaces, or resource isolation
-  beyond PTY boundaries.
-- **Not a job scheduler.** No cron, retry policies, or persistent queues.
-- **Not cross-platform.** Unix sockets and PTYs are Linux/macOS only.
-
-## Mental Model
-
-```
-Agent    = PTY process + virtual screen + transcript buffer
-Server   = owns all agents, listens on Unix socket, manages lifecycle
-Client   = stateless CLI that sends JSON requests over the socket
-View     = tmux session with one pane per agent (attach --readonly)
-```
-
-- Agents are addressed by ID (auto-generated or `--name`).
-- Labels group agents for bulk operations (`--label worker`).
-- The server auto-starts on first client request and persists until `botty shutdown`.
-- Signals go through `agent.pty.signal()` — botty never kills arbitrary PIDs.
+- Linux with Unix sockets + PTY support
+- Rust 1.85+ (for building from source)
+- `tmux` (optional, only for `botty view`)
 
 ## Install
 
+From this repository:
+
 ```bash
-cargo install --locked --git https://github.com/bobisme/botty --tag v0.5.0
+cargo install --locked --path .
 ```
 
-Requires Rust 1.85+ (uses `let-else` and `let chains`).
-
-## Quick Start
+From git tag:
 
 ```bash
-# Spawn an interactive shell
+cargo install --locked --git https://github.com/bobisme/botty --tag v0.12.1
+```
+
+## Quick start (2 minutes)
+
+```bash
+# 1) Spawn a worker shell
 botty spawn --name demo -- bash
 
-# Send a command and read the screen
-botty send demo "ls -la" -n  # -n appends newline to execute the command
+# 2) Send a command (+ Enter)
+botty send demo "echo hello from botty" -n
+
+# 3) Wait for expected output, then inspect the virtual screen
+botty wait demo --contains "hello from botty" --timeout 5
 botty snapshot demo
 
-# Attach interactively (Ctrl+G then d to detach)
-botty attach demo
+# 4) Clean up (SIGTERM by default; use --force for hard kill)
+botty kill demo --force
 
-# Clean up
-botty kill demo
+# 5) Stop server when done
+botty shutdown
 ```
 
-## Usage
+## Mental model
 
-### Spawning agents
+```text
+Agent  = PTY process + transcript ring + virtual screen
+Server = owns all agent state, listens on Unix socket
+Client = stateless CLI sending JSON requests
+View   = tmux dashboard; panes run read-only attach streams
+```
+
+Key implications:
+
+- `snapshot` reflects current terminal state (best for assertions).
+- `tail`/`dump` reflect transcript bytes (useful for logs/streaming).
+- State is in-memory in the server process (no persistence across server restart).
+
+## Core command map
+
+### Lifecycle
 
 ```bash
-botty spawn -- htop                          # auto-generated name
-botty spawn --name worker -- python app.py   # custom name
-botty spawn --label batch --timeout 60 -- make test  # labels + auto-kill
+botty spawn --name worker --label batch --timeout 60 -- bash
+botty list
+botty list --all --format json
+botty kill worker
+botty kill --label batch --force
+botty kill --all --force
+botty signal worker --signal USR1
 ```
 
-### Observing
+### Input/output
 
 ```bash
-botty list                    # running agents (toon format for LLMs)
-botty list --format json      # JSON output
-botty snapshot <id>           # current screen contents
-botty snapshot --raw <id>     # with ANSI colors preserved
-botty tail <id>               # last N lines of transcript
-botty tail <id> --follow      # stream output
+botty send worker "make test" -n
+botty send-bytes worker 1b5b41           # up arrow
+botty send-keys worker ctrl-c enter
+botty tail worker -f
+botty tail worker --raw
+botty snapshot worker
+botty snapshot worker --raw
+botty dump worker --format jsonl
 ```
 
-![botty snapshot --raw showing a TUI program](images/snapshot.png)
-
-### Killing
+### Synchronization and assertions
 
 ```bash
-botty kill <id>               # kill by ID (SIGKILL)
-botty kill --label batch      # kill all agents with label
-botty kill --proc htop        # kill agents whose command matches "htop"
-botty kill --all              # kill everything
-botty kill <id> --term        # SIGTERM instead of SIGKILL
+botty wait worker --contains "READY" --timeout 30
+botty wait worker --stable 200 --contains "$ "
+botty wait worker --exited
+botty assert worker --contains "PASS"
+botty assert worker --not-contains "ERROR"
 ```
 
-### Waiting
+### Streaming and observability
 
 ```bash
-botty wait <id> --contains "ready"           # wait for string in output
-botty wait <id> --stable 200                 # wait for screen to settle
-botty wait <id> --contains "$ " --stable 100 # combined (AND logic)
+botty events --output
+botty subscribe --id worker --prefix
+botty subscribe --label batch --format jsonl
+botty attach worker
+botty attach worker --readonly
+botty view
+botty view --mode windows
+botty view --label batch
 ```
 
-### Orchestration
+### One-off command execution
 
 ```bash
-# Dependency chains
-botty spawn --name db -- postgres
-botty spawn --name app --after db --wait-for db:ready -- node server.js
-
-# Event stream for reactive automation
-botty events --output   # JSON stream of spawn/exit/output events
+botty exec -- git status --short
+botty exec --timeout 120 -- cargo test
 ```
 
-### View (tmux dashboard)
+### Recording and replay scaffolding
 
 ```bash
-botty view                    # launch tmux viewer
-botty view --mode windows     # one tmux window per agent
-botty view --label frontend   # filter by label
+botty spawn --name rec --record -- bash
+botty send rec "echo hi" -n
+botty recording rec --format pretty
+botty gen-test rec > replay.sh
+chmod +x replay.sh
 ```
 
-Press **Ctrl+P** for the command palette inside the viewer.
+## Orchestration patterns
 
-## Configuration
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `BOTTY_SOCKET` | `$XDG_RUNTIME_DIR/botty/botty.sock` | Unix socket path |
-| `--verbose` / `-v` | off | Debug logging to stderr |
-
-## Diagnostics
+Spawn dependencies:
 
 ```bash
-botty doctor   # checks socket, PTY allocation, server connectivity, spawn/kill cycle
+# Wait for setup to exit before starting app
+botty spawn --name setup -- ./setup.sh
+botty spawn --name app --after setup -- ./run-app.sh
+
+# Wait for output from another agent before spawning
+botty spawn --name db -- ./start-db.sh
+botty spawn --name api --wait-for db:READY -- ./start-api.sh
 ```
 
-Healthy output: all checks show `[OK]`. If the server is unresponsive, try
-`botty shutdown` to clear a stale socket, then retry.
+Recommended cleanup for automation:
 
-## For AI Agents
+```bash
+botty kill --label batch --force
+```
 
-- All commands are non-interactive (except `attach`) and return structured output.
-- `--format json` on `list` gives machine-parseable agent state.
-- `snapshot` returns the current virtual screen — no terminal emulator needed.
-- `wait` blocks until output conditions are met (avoids polling).
-- `events` provides a JSON stream for reactive orchestration.
-- `exec` is a convenience wrapper: spawn + send + wait + snapshot + kill.
-- Kill is idempotent — killing a non-existent agent exits 0.
+## Output formats for automation
 
-## References
+Many commands support `--format text|json|pretty`.
 
-- [CLAUDE.md](CLAUDE.md) — development workflow, testing strategy, commit conventions
+- `text`: compact, pipe-friendly
+- `json`: structured envelope (`{"<key>": ..., "advice": [...]}`)
+- `pretty`: human-oriented terminal output
+
+Example:
+
+```bash
+botty list --format json | jq '.agents[] | {id, state, labels}'
+```
+
+## Server behavior
+
+- Server auto-starts for most regular commands.
+- `events` and `subscribe` do **not** auto-start (they expect an existing server/session).
+- Default socket path: `/run/user/$UID/botty.sock` (fallback `/tmp/botty-$UID.sock`).
+- Override with `BOTTY_SOCKET` or `--socket`.
+
+## Troubleshooting
+
+```bash
+botty doctor
+```
+
+If you hit stale socket/session issues:
+
+```bash
+botty shutdown
+tmux kill-session -t botty 2>/dev/null || true
+```
+
+Notes:
+
+- `kill` sends SIGTERM by default; some interactive shells ignore it. Use `--force` for deterministic teardown.
+- For TUI inspection, prefer `snapshot` or `attach --readonly` over plain `tail`.
+
+## Development
+
+```bash
+just build
+just test
+```
+
+Relevant docs:
+
+- `AGENTS.md` - contributor + agent workflow
+- `docs/testing.md` - testing approach and scenarios

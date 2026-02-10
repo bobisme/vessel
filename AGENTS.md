@@ -4,241 +4,55 @@ Project type: cli
 Tools: `beads`, `maw`, `crit`, `botbus`, `botty`
 Reviewer roles: security
 
-<!-- Add project-specific context below: architecture, conventions, key files, etc. -->
+## What This Project Is
+
+- `botty` is a PTY-native runtime for orchestrating interactive terminal processes (usually AI workers) over a local Unix socket.
+- It separates control plane (server + JSON IPC) from observation (attach/view), so agents and humans can both drive/debug the same workloads.
+- It is built for deterministic-ish automation loops: `spawn -> send -> wait/assert -> snapshot -> kill`.
+- It is not a container runtime, scheduler, or persistence-first daemon.
+
+## Architecture (Expert Brief)
+
+- `src/cli.rs`: clap command surface and argument contracts.
+- `src/main.rs`: command dispatch, orchestration workflows (`wait`, `exec`, `view`, `subscribe`, `events`, dependency waits).
+- `src/protocol.rs`: newline-delimited JSON IPC contract (`Request`/`Response`/`Event`) and shared structs.
+- `src/client.rs`: socket client + auto-start path + default socket resolution.
+- `src/server/mod.rs`: socket server, request handlers, PTY polling, event broadcast, attach/events streaming.
+- `src/server/agent.rs`: per-agent lifecycle state (PTY handle, labels, limits, recording, screen/transcript ownership).
+- `src/server/screen.rs`: vt100-backed virtual screen state and snapshots.
+- `src/server/transcript.rs`: bounded transcript ring buffer.
+- `src/pty.rs`: unsafe PTY spawn/env setup/signal primitives.
+- `src/attach.rs`: interactive bridge (raw mode, detach key, resize forwarding).
+- `src/view.rs`: tmux dashboard/session/pane management.
+- `src/output.rs`: text/json/pretty output normalization.
+
+## Runtime Semantics and Invariants
+
+- Socket path defaults to `/run/user/$UID/botty.sock` (fallback `/tmp/botty-$UID.sock`); override via `BOTTY_SOCKET` or `--socket`.
+- Most commands auto-start server when absent; `events` and `subscribe` intentionally do not.
+- Server state is in-memory only (no durable agent persistence/replay DB).
+- Agent = process + PTY + transcript ring + virtual screen + metadata (labels, limits, no-resize, recording).
+- `spawn` uses a clean env baseline plus essential vars; `--env` and `--env-inherit` opt in extras.
+- `kill` defaults to SIGTERM; `--force` uses SIGKILL; kill is idempotent for not-found/no-match cases.
+- `wait --exited` is event-driven and propagates child exit code; snapshot-based waits poll screen state.
+- Transcript is bounded (`max_output` or default cap) and can evict old bytes; `snapshot` is the reliable TUI state surface.
+- `view` uses tmux session `botty`; panes/windows run `botty attach --readonly <id>`; pane identity is `@agent_id` (not pane title).
+- Auto-resize is on by default in `view`; hooks resize PTYs + emit SIGWINCH unless agent is `--no-resize`.
+
+## Testing and Quality Map
+
+- Unit tests: `src/*` modules.
+- Integration/CLI/orchestration: `tests/integration.rs`, `tests/cli.rs`, `tests/orchestration.rs`.
+- Fuzzing: `fuzz/fuzz_targets/*`.
+- Local gates: `just build` and `just test`.
+
+## Contributor Guidance (High Signal)
+
+- Keep command changes coherent across `src/cli.rs`, `src/main.rs`, `src/protocol.rs`, `src/server/mod.rs`, and tests.
+- Treat `src/main.rs` as behavior source-of-truth over stale docs; verify semantics in code before editing docs.
+- Be careful around raw terminal/PTY paths (`attach`, `view`, `pty`) and signal handling.
+- For TUI correctness, prefer screen/snapshot or attach-stream semantics over transcript replay assumptions.
 
-
-## Daily Development Workflow
-
-### Starting a Work Session
-
-1. **Check for new work** and triage if needed:
-   ```bash
-   br ready                    # See what's actionable
-   botbus history botty        # Check for messages from other agents
-   jj git fetch                # Fetch latest from remote
-   ```
-
-2. **Triage new issues** (if any were filed):
-   - Read the actual code to assess feasibility
-   - Check for existing infrastructure you can leverage
-   - Estimate complexity and update priority if needed
-   - Add implementation notes to the bead description
-   ```bash
-   br show <issue-id>
-   br update <issue-id> --priority=2 --description="Updated with implementation notes"
-   ```
-
-3. **Pick work** based on priority and scope:
-   - Prefer P2 over P3
-   - Consider batching related features for a release
-   - Bugs before features (users are affected now)
-
-4. **Start working** (jj tracks changes automatically):
-   ```bash
-   jj describe -m "wip: working on <feature>"
-   ```
-
-### Feature Development Loop
-
-For each feature, follow this cycle:
-
-1. **Start the work**:
-   ```bash
-   br update <issue-id> --status=in_progress
-   ```
-
-2. **Implement the feature**:
-   - Read existing code to understand patterns
-   - Make minimal, focused changes
-   - Avoid over-engineering or premature abstraction
-   - Follow existing conventions (file structure, naming, error handling)
-
-3. **Test thoroughly**:
-   ```bash
-   just test                   # Unit + integration tests
-   cargo test <test-name>      # Specific test
-   just build                  # Verify it builds
-   ```
-   - Add unit tests for new functions
-   - Add integration/CLI tests for new commands
-   - Do manual testing for UX features
-   - Verify all tests pass before committing
-
-4. **Describe your changes** with semantic message:
-   ```bash
-   jj describe -m "feat(scope): description
-
-   Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
-   ```
-
-5. **Close the bead**:
-   ```bash
-   br close <issue-id> --reason="Implemented in commit <sha>. [brief summary]"
-   ```
-
-6. **Continue to next feature** or prepare for release
-   - jj automatically creates a new working copy
-   - Each feature gets its own commit
-
-### Batch Releases
-
-Instead of releasing after each feature, batch multiple features into a release:
-
-1. Work on 2-4 related features
-2. Test everything together
-3. Bump version, tag, and release as one unit
-4. **Only then** announce on #botty
-
-This creates coherent releases with clear themes (e.g., "testing improvements").
-
-### Bug Investigation Workflow
-
-1. **Understand the symptom**: Read the bug report carefully
-2. **Find the code**: Use `grep`, `rg`, or `ast-grep` to locate relevant code
-3. **Reproduce locally**: Try to trigger the bug yourself
-4. **Identify root cause**: Read the code, trace the execution path
-5. **Design minimal fix**: Target the root cause, avoid over-engineering
-6. **Test the fix**: Verify it solves the problem without breaking anything
-7. **Consider edge cases**: What else might be affected?
-
-### End of Session Checklist
-
-Before ending a work session:
-
-```bash
-jj status                    # Check working copy state
-jj diff                      # Review changes
-br sync --flush-only         # Export beads to JSONL
-
-# Describe the beads update commit
-jj describe -m "chore(beads): update issue tracking
-
-Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
-
-# Push to main (if working directly on main)
-jj git push --bookmark main
-```
-
-**Note**: If you've been making multiple commits, you may want to squash them before pushing. See the Release Workflow section for details on preparing changes for review.
-
-## Release Workflow
-
-This section covers the full release cycle: creating a feature branch, implementing changes, getting review, and releasing.
-
-### 1. Start a Feature Branch
-
-```bash
-# Create a new commit for your work
-jj new -m "wip: description of change"
-
-# Create a bookmark for the feature
-jj bookmark create feature-name
-
-# Work on your changes...
-jj describe -m "feat(scope): description of change"
-```
-
-### 2. Request Code Review
-
-After completing your changes and ensuring tests pass:
-
-```bash
-# Verify build and tests
-just build && just test
-
-# Create a review
-crit reviews create --title "feat(scope): description of change"
-# Note the review ID (e.g., cr-xxxx)
-```
-
-**Spawn specialist reviewers** using the code-review skill (`~/.claude/skills/code-review/SKILL.md`):
-
-- **Security reviewer** (always): Looks for injection, auth issues, resource exhaustion, etc.
-- **Architecture reviewer** (for structural changes): Evaluates design, abstractions, maintainability
-
-The skill has ready-to-use prompts for spawning these subagents.
-
-### 3. Address Review Feedback
-
-Monitor botbus for reviewer completion:
-
-```bash
-botbus history general
-```
-
-For each thread raised:
-
-```bash
-# View threads
-crit threads list <review_id>
-crit threads show <thread_id>
-
-# Respond (set your agent identity first)
-export BOTBUS_AGENT=<your-agent>
-crit comments add <thread_id> "Response explaining fix or rationale"
-
-# After addressing, resolve with reason
-crit threads resolve <thread_id> --reason "Fixed: description"
-crit threads resolve <thread_id> --reason "Won't fix: rationale"
-crit threads resolve <thread_id> --reason "Deferred: created bead bd-xxx"
-```
-
-### 4. Get Approval
-
-Reviewers vote with:
-
-```bash
-crit lgtm <review_id> -m "Reason"    # Approve
-crit block <review_id> -r "Reason"   # Block
-```
-
-### 5. Merge and Release
-
-Once approved (LGTM votes, no blocking votes, all threads resolved):
-
-```bash
-# Approve and merge the review
-crit reviews approve <review_id>
-crit reviews merge <review_id>
-
-# Bump version in Cargo.toml (edit manually or with sed)
-# e.g., 0.2.0 → 0.3.0
-
-# Update commit message
-jj describe -m "chore: bump version to X.Y.Z
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-
-# Move main bookmark forward and push
-jj bookmark set main -r @
-jj git push --bookmark main
-
-# Tag the release and push tag
-jj tag set vX.Y.Z -r main
-git push origin vX.Y.Z
-
-# Install locally
-just install
-
-# Verify
-botty --version
-
-# Announce on botbus
-export BOTBUS_AGENT=<your-agent>
-botbus send botty "Released vX.Y.Z - [summary of changes]"
-```
-
-### Quick Reference
-
-| Stage | Key Commands |
-|-------|--------------|
-| Start feature | `jj new -m "wip: ..."` then `jj bookmark create name` |
-| Create review | `crit reviews create --title "..."` |
-| View threads | `crit threads list <review_id>` |
-| Respond | `crit comments add <thread_id> "..."` |
-| Resolve | `crit threads resolve <thread_id> --reason "..."` |
-| Approve/merge | `crit reviews approve <id> && crit reviews merge <id>` |
-| Release | bump version → `jj bookmark set main` → push → tag → `just install` |
 <!-- botbox:managed-start -->
 ## Botbox Workflow
 
