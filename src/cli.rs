@@ -184,6 +184,10 @@ pub enum Command {
         #[arg(long)]
         format: Option<String>,
 
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
+
         /// Command to run (after --).
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
@@ -203,7 +207,7 @@ pub enum Command {
         #[arg(long, default_value = "pretty")]
         format: String,
 
-        /// Output in JSON format (for piping to jq). Deprecated: use --format json.
+        /// Output in JSON format (alias for --format json).
         #[arg(long, hide = true)]
         json: bool,
     },
@@ -232,6 +236,10 @@ pub enum Command {
         /// Output format: text, json, or pretty.
         #[arg(long)]
         format: Option<String>,
+
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
     },
 
     /// Send a Unix signal to an agent.
@@ -276,6 +284,10 @@ pub enum Command {
         /// Output format: text, json, or pretty.
         #[arg(long)]
         format: Option<String>,
+
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
     },
 
     /// Send raw bytes to an agent.
@@ -289,6 +301,10 @@ pub enum Command {
         /// Output format: text, json, or pretty.
         #[arg(long)]
         format: Option<String>,
+
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
     },
 
     /// Send named key sequences to an agent.
@@ -313,6 +329,10 @@ pub enum Command {
         /// Output format: text, json, or pretty.
         #[arg(long)]
         format: Option<String>,
+
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
     },
 
     /// Tail agent output.
@@ -588,6 +608,10 @@ SUBAGENT WORKFLOW:
         /// Output format: text (one-line records), json (envelope), or pretty (formatted JSON).
         #[arg(long)]
         format: Option<String>,
+
+        /// Output in JSON format (alias for --format json).
+        #[arg(long, hide = true)]
+        json: bool,
     },
 
     /// Generate a test script from a recorded agent session.

@@ -399,7 +399,7 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, after, wait_for, format, cmd } => {
+        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, after, wait_for, format, json, cmd } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
@@ -417,7 +417,7 @@ async fn run_client(
 
             match response {
                 Response::Spawned { id, pid } => {
-                    let fmt = resolve_format(format.as_deref());
+                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
                     match fmt {
                         OutputFormat::Text => {
                             // Text output: just the ID (for agents parsing this)
@@ -468,7 +468,7 @@ async fn run_client(
                             .collect()
                     };
 
-                    // Determine output format (handle deprecated --json flag)
+                    // Determine output format (handle --json alias)
                     let format_flag = if json { Some("json") } else { Some(format.as_str()) };
                     let output_format = resolve_format(format_flag);
 
@@ -582,7 +582,7 @@ async fn run_client(
             }
         }
 
-        Command::Kill { id, label, all, force, proc, format } => {
+        Command::Kill { id, label, all, force, proc, format, json } => {
             // Must specify either id, label, proc, or all
             if id.is_none() && label.is_empty() && !all && proc.is_none() {
                 return Err("must specify agent ID, --label, --proc, or --all".into());
@@ -597,7 +597,7 @@ async fn run_client(
 
             match response {
                 Response::Ok => {
-                    let fmt = resolve_format(format.as_deref());
+                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
                     match fmt {
                         OutputFormat::Text => {
                             // Keep backward-compatible output
@@ -676,6 +676,7 @@ async fn run_client(
             text,
             newline,
             format,
+            json,
         } => {
             let request = Request::Send {
                 id: id.clone(),
@@ -686,7 +687,7 @@ async fn run_client(
 
             match response {
                 Response::Ok => {
-                    let fmt = resolve_format(format.as_deref());
+                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
                     match fmt {
                         OutputFormat::Text => {
                             // Keep text/pretty silent for fire-and-forget commands
@@ -714,14 +715,14 @@ async fn run_client(
             }
         }
 
-        Command::SendBytes { id, hex, format } => {
+        Command::SendBytes { id, hex, format, json } => {
             let data = hex::decode(&hex).map_err(|e| format!("invalid hex: {e}"))?;
             let request = Request::SendBytes { id: id.clone(), data };
             let response = client.request(request).await?;
 
             match response {
                 Response::Ok => {
-                    let fmt = resolve_format(format.as_deref());
+                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
                     match fmt {
                         OutputFormat::Text => {
                             // Keep text/pretty silent for fire-and-forget commands
@@ -749,7 +750,7 @@ async fn run_client(
             }
         }
 
-        Command::SendKeys { id, keys, format } => {
+        Command::SendKeys { id, keys, format, json } => {
             use botty::parse_key_sequence;
             for key in keys {
                 let data = parse_key_sequence(&key)
@@ -768,7 +769,7 @@ async fn run_client(
                 }
             }
             // Output after all keys are sent
-            let fmt = resolve_format(format.as_deref());
+            let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
             match fmt {
                 OutputFormat::Text => {
                     // Keep text/pretty silent for fire-and-forget commands
@@ -1006,13 +1007,13 @@ async fn run_client(
             }
         }
 
-        Command::Recording { id, format } => {
+        Command::Recording { id, format, json } => {
             let request = Request::GetRecording { id: id.clone() };
             let response = client.request(request).await?;
 
             match response {
                 Response::Recording { agent_id, commands } => {
-                    let fmt = resolve_format(format.as_deref());
+                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
                     match fmt {
                         OutputFormat::Text => {
                             // Text output: one line per command (timestamp, command type, payload)
