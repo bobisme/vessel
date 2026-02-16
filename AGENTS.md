@@ -129,11 +129,27 @@ jj abandon <change-id>/0   # keep one, abandon the divergent copy
 
 **Always pass `-m`**: Commands like `jj commit`, `jj squash`, and `jj describe` open an editor by default. Agents cannot interact with editors, so always pass `-m "message"` explicitly.
 
+### Protocol Quick Reference
+
+Use these commands at protocol transitions to check state and get exact guidance. Each command outputs instructions for the next steps.
+
+| Step | Command | Who | Purpose |
+|------|---------|-----|---------|
+| Resume | `botbox protocol resume --agent $AGENT` | Worker | Detect in-progress work from previous session |
+| Start | `botbox protocol start <bead-id> --agent $AGENT` | Worker | Verify bead is ready, get start commands |
+| Review | `botbox protocol review <bead-id> --agent $AGENT` | Worker | Verify work is complete, get review commands |
+| Finish | `botbox protocol finish <bead-id> --agent $AGENT` | Worker | Verify review approved, get close/cleanup commands |
+| Merge | `botbox protocol merge <workspace> --agent $AGENT` | Lead | Check preconditions, detect conflicts, get merge steps |
+| Cleanup | `botbox protocol cleanup --agent $AGENT` | Worker | Check for held resources to release |
+
+All commands support JSON output with `--format json` for parsing. If a command is unavailable or fails (exit code 1), fall back to manual steps documented in [start](.agents/botbox/start.md), [review-request](.agents/botbox/review-request.md), and [finish](.agents/botbox/finish.md).
+
 ### Beads Conventions
 
 - Create a bead before starting work. Update status: `open` → `in_progress` → `closed`.
 - Post progress comments during work for crash recovery.
-- **Push to main** after completing beads (see [finish.md](.agents/botbox/finish.md)).
+- **Run checks before requesting review**: `just check` (or your project's build/test command). Fix any failures before proceeding.
+- After finishing a bead, follow [finish.md](.agents/botbox/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
 
 ### Identity
 
@@ -161,6 +177,22 @@ bus send --agent $AGENT $PROJECT "Review requested: <review-id> @$PROJECT-securi
 
 The @mention triggers the auto-spawn hook for the reviewer.
 
+### Bus Communication
+
+Agents communicate via bus channels. You don't need to be expert on everything — ask the right project.
+
+| Operation | Command |
+|-----------|---------|
+| Send message | `bus send --agent $AGENT <channel> "message" [-L label]` |
+| Check inbox | `bus inbox --agent $AGENT --channels <ch> [--mark-read]` |
+| Wait for reply | `bus wait -c <channel> --mention -t 120` |
+| Browse history | `bus history <channel> -n 20` |
+| Search messages | `bus search "query" -c <channel>` |
+
+**Conversations**: After sending a question, use `bus wait -c <channel> --mention -t <seconds>` to block until the other agent replies. This enables back-and-forth conversations across channels.
+
+**Project experts**: Each `<project>-dev` is the expert on their project. When stuck on a companion tool (bus, maw, crit, botty, br), post a question to its project channel instead of guessing.
+
 ### Cross-Project Communication
 
 **Don't suffer in silence.** If a tool confuses you or behaves unexpectedly, post to its project channel.
@@ -182,24 +214,44 @@ Use `cass search "error or problem"` to find how similar issues were solved in p
 
 ### Design Guidelines
 
+
 - [CLI tool design for humans, agents, and machines](.agents/botbox/design/cli-conventions.md)
+
+
 
 ### Workflow Docs
 
-- [Ask questions, report bugs, and track responses across projects](.agents/botbox/cross-channel.md)
-- [Close bead, merge workspace, release claims, sync](.agents/botbox/finish.md)
-- [groom](.agents/botbox/groom.md)
-- [Verify approval before merge](.agents/botbox/merge-check.md)
-- [Turn specs/PRDs into actionable beads](.agents/botbox/planning.md)
-- [Validate toolchain health](.agents/botbox/preflight.md)
-- [Create and validate proposals before implementation](.agents/botbox/proposal.md)
-- [Report bugs/features to other projects](.agents/botbox/report-issue.md)
-- [Reviewer agent loop](.agents/botbox/review-loop.md)
-- [Request a review](.agents/botbox/review-request.md)
-- [Handle reviewer feedback (fix/address/defer)](.agents/botbox/review-response.md)
-- [Explore unfamiliar code before planning](.agents/botbox/scout.md)
-- [Claim bead, create workspace, announce](.agents/botbox/start.md)
+
 - [Find work from inbox and beads](.agents/botbox/triage.md)
+
+- [Claim bead, create workspace, announce](.agents/botbox/start.md)
+
 - [Change bead status (open/in_progress/blocked/done)](.agents/botbox/update.md)
+
+- [Close bead, merge workspace, release claims, sync](.agents/botbox/finish.md)
+
 - [Full triage-work-finish lifecycle](.agents/botbox/worker-loop.md)
+
+- [Turn specs/PRDs into actionable beads](.agents/botbox/planning.md)
+
+- [Explore unfamiliar code before planning](.agents/botbox/scout.md)
+
+- [Create and validate proposals before implementation](.agents/botbox/proposal.md)
+
+- [Request a review](.agents/botbox/review-request.md)
+
+- [Handle reviewer feedback (fix/address/defer)](.agents/botbox/review-response.md)
+
+- [Reviewer agent loop](.agents/botbox/review-loop.md)
+
+- [Merge a worker workspace (protocol merge + conflict recovery)](.agents/botbox/merge-check.md)
+
+- [Validate toolchain health](.agents/botbox/preflight.md)
+
+- [Ask questions, report bugs, and track responses across projects](.agents/botbox/cross-channel.md)
+
+- [Report bugs/features to other projects](.agents/botbox/report-issue.md)
+
+- [groom](.agents/botbox/groom.md)
+
 <!-- botbox:managed-end -->
