@@ -854,8 +854,8 @@ async fn run_client(
                     let response = client
                         .request(Request::Tail {
                             id: id.clone(),
-                            lines,
-                            follow: false, // Server doesn't implement follow
+                            lines: 0, // Need full transcript for offset tracking
+                            follow: false,
                         })
                         .await?;
 

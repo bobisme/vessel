@@ -568,13 +568,12 @@ async fn handle_request(
 
         Request::Tail {
             id,
-            lines: _,
+            lines,
             follow: _,
         } => {
             let mgr = manager.lock().await;
             if let Some(agent) = mgr.get(&id) {
-                // Return full transcript - client handles offset tracking
-                let data = agent.transcript.all_bytes();
+                let data = agent.transcript.tail_lines(lines);
                 let exited = !agent.is_running();
                 Response::Output { data, exited }
             } else {

@@ -92,6 +92,47 @@ impl Transcript {
         result
     }
 
+    /// Get the last N lines of output.
+    ///
+    /// Returns 0 for "all lines" (equivalent to `all_bytes()`).
+    /// Lines are split on `\n`. A trailing newline does not count as an extra empty line.
+    #[must_use]
+    pub fn tail_lines(&self, n: usize) -> Vec<u8> {
+        if n == 0 {
+            return self.all_bytes();
+        }
+
+        // Collect all bytes then take last N lines
+        let all = self.all_bytes();
+        if all.is_empty() {
+            return all;
+        }
+
+        // Walk backwards counting newlines
+        let bytes = &all[..];
+        let mut lines_found = 0;
+        let mut pos = bytes.len();
+
+        // Skip trailing newline so it doesn't count as an empty line
+        if pos > 0 && bytes[pos - 1] == b'\n' {
+            pos -= 1;
+        }
+
+        while pos > 0 {
+            pos -= 1;
+            if bytes[pos] == b'\n' {
+                lines_found += 1;
+                if lines_found == n {
+                    // Start right after this newline
+                    return bytes[pos + 1..].to_vec();
+                }
+            }
+        }
+
+        // Fewer than N lines — return everything
+        all
+    }
+
     /// Get all entries.
     pub fn all(&self) -> impl Iterator<Item = &TranscriptEntry> {
         self.entries.iter()
@@ -156,5 +197,56 @@ mod tests {
 
         let tail = t.tail_bytes(7);
         assert_eq!(tail, b"loworld");
+    }
+
+    #[test]
+    fn test_tail_lines() {
+        let mut t = Transcript::new(4096);
+        t.append(b"line1\nline2\nline3\nline4\nline5\n");
+
+        // Last 2 lines
+        let tail = t.tail_lines(2);
+        assert_eq!(tail, b"line4\nline5\n");
+
+        // Last 1 line
+        let tail = t.tail_lines(1);
+        assert_eq!(tail, b"line5\n");
+
+        // More lines than exist — returns all
+        let tail = t.tail_lines(100);
+        assert_eq!(tail, b"line1\nline2\nline3\nline4\nline5\n");
+
+        // 0 means all
+        let tail = t.tail_lines(0);
+        assert_eq!(tail, b"line1\nline2\nline3\nline4\nline5\n");
+    }
+
+    #[test]
+    fn test_tail_lines_no_trailing_newline() {
+        let mut t = Transcript::new(4096);
+        t.append(b"line1\nline2\nline3");
+
+        let tail = t.tail_lines(2);
+        assert_eq!(tail, b"line2\nline3");
+
+        let tail = t.tail_lines(1);
+        assert_eq!(tail, b"line3");
+    }
+
+    #[test]
+    fn test_tail_lines_across_entries() {
+        let mut t = Transcript::new(4096);
+        t.append(b"line1\nline2\n");
+        t.append(b"line3\nline4\n");
+
+        let tail = t.tail_lines(2);
+        assert_eq!(tail, b"line3\nline4\n");
+    }
+
+    #[test]
+    fn test_tail_lines_empty() {
+        let t = Transcript::new(4096);
+        let tail = t.tail_lines(10);
+        assert!(tail.is_empty());
     }
 }
