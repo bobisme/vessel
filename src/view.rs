@@ -94,6 +94,25 @@ impl TmuxView {
             .unwrap_or(false)
     }
 
+    /// Ensure remain-on-exit is set on the agents window.
+    /// Safe to call on existing sessions (idempotent).
+    pub fn ensure_remain_on_exit(&self) {
+        let status = Command::new("tmux")
+            .args([
+                "set-option",
+                "-w",
+                "-t",
+                &format!("{}:agents", self.session_name),
+                "remain-on-exit",
+                "on",
+            ])
+            .status();
+
+        if let Err(e) = status {
+            eprintln!("Warning: failed to set remain-on-exit: {}", e);
+        }
+    }
+
     /// Create a new tmux session (detached).
     /// Returns the window ID of the first window.
     pub fn create_session(&self) -> Result<(), ViewError> {
@@ -115,21 +134,7 @@ impl TmuxView {
         // Set remain-on-exit at window level so panes don't disappear when their
         // process exits. This prevents the session from being destroyed when the
         // last pane's process exits, giving us time to respawn with the placeholder.
-        let status = Command::new("tmux")
-            .args([
-                "set-option",
-                "-w",
-                "-t",
-                &format!("{}:agents", self.session_name),
-                "remain-on-exit",
-                "on",
-            ])
-            .status();
-        
-        if let Err(e) = status {
-            // Log but don't fail - session will still work, just won't persist on last pane exit
-            eprintln!("Warning: failed to set remain-on-exit: {}", e);
-        }
+        self.ensure_remain_on_exit();
 
         // Enable pane border banners showing agent info
         let session_window = format!("{}:agents", self.session_name);

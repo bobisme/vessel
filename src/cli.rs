@@ -425,12 +425,16 @@ SUBAGENT WORKFLOW:
     botty wait --exited \"$child\"
     echo \"Exit code: $?\"
 
-  Combined with output conditions:
+  Wait for multiple agents to exit:
+
+    botty wait --exited worker-1 worker-2 worker-3
+
+  Combined with output conditions (single agent only):
 
     botty wait --exited --contains 'done' --print my-agent")]
     Wait {
-        /// Agent ID.
-        id: String,
+        /// Agent ID(s). Multiple IDs can be specified with --exited.
+        id: Vec<String>,
 
         /// Wait until the agent has exited.
         #[arg(long)]

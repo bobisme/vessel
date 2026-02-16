@@ -1094,7 +1094,7 @@ async fn run_client(
         }
 
         Command::Wait {
-            id,
+            id: ids,
             exited,
             contains,
             pattern,
@@ -1105,16 +1105,30 @@ async fn run_client(
             use regex::Regex;
             use std::time::{Duration, Instant};
 
+            if ids.is_empty() {
+                return Err("at least one agent ID is required".into());
+            }
+
             let timeout_duration = Duration::from_secs(timeout);
             let deadline = Instant::now() + timeout_duration;
 
+            // Screen-based conditions only work with a single agent
+            let has_screen_conditions = contains.is_some() || pattern.is_some() || stable.is_some();
+            if ids.len() > 1 && !exited {
+                return Err("multiple agent IDs require --exited".into());
+            }
+            if ids.len() > 1 && (has_screen_conditions || print) {
+                return Err("--contains, --pattern, --stable, and --print require a single agent ID".into());
+            }
+
             if exited {
-                // Event-based approach: wait for agent to exit
+                // Event-based approach: wait for agent(s) to exit
                 use botty::protocol::Event;
+                use std::collections::HashMap;
                 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
                 use tokio::net::UnixStream;
 
-                // First check current state - agent may have already exited
+                // First check current state - agents may have already exited
                 let response = client.request(Request::List { labels: vec![] }).await?;
                 let agents = match response {
                     Response::Agents { agents } => agents,
@@ -1122,32 +1136,40 @@ async fn run_client(
                     _ => return Err("unexpected response".into()),
                 };
 
-                let agent = agents.iter().find(|a| a.id == id);
-                let already_exited = match agent {
-                    Some(a) => a.state == botty::AgentState::Exited,
-                    None => return Err(format!("agent not found: {id}").into()),
-                };
+                // Track exit codes and which agents still need to exit
+                let mut exit_codes: HashMap<String, Option<i32>> = HashMap::new();
+                let mut pending: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-                let exit_code = if already_exited {
-                    agent.unwrap().exit_code
-                } else {
-                    // Subscribe to events and wait for AgentExited
+                for id in &ids {
+                    let agent = agents.iter().find(|a| a.id == *id);
+                    match agent {
+                        Some(a) if a.state == botty::AgentState::Exited => {
+                            exit_codes.insert(id.clone(), a.exit_code);
+                        }
+                        Some(_) => {
+                            pending.insert(id.clone());
+                        }
+                        None => return Err(format!("agent not found: {id}").into()),
+                    }
+                }
+
+                if !pending.is_empty() {
+                    // Subscribe to events and wait for remaining agents
                     let stream = UnixStream::connect(&socket_path_ref).await?;
                     let (reader, mut writer) = stream.into_split();
                     let mut reader = BufReader::new(reader);
 
                     let events_request = Request::Events {
-                        filter: vec![id.clone()],
+                        filter: pending.iter().cloned().collect(),
                         include_output: false,
                     };
                     let mut json = serde_json::to_string(&events_request)?;
                     json.push('\n');
                     writer.write_all(json.as_bytes()).await?;
 
-                    let exit_code;
-                    loop {
+                    while !pending.is_empty() {
                         if Instant::now() >= deadline {
-                            eprintln!("error: timeout waiting for agent to exit");
+                            eprintln!("error: timeout waiting for agent(s) to exit");
                             std::process::exit(1);
                         }
 
@@ -1160,9 +1182,9 @@ async fn run_client(
                             Ok(Ok(_)) => {
                                 let response: Response = serde_json::from_str(&line)?;
                                 match response {
-                                    Response::Event(Event::AgentExited { id: ref eid, exit_code: ec }) if *eid == id => {
-                                        exit_code = ec;
-                                        break;
+                                    Response::Event(Event::AgentExited { ref id, exit_code }) if pending.contains(id) => {
+                                        exit_codes.insert(id.clone(), exit_code);
+                                        pending.remove(id);
                                     }
                                     Response::Error { message } => return Err(message.into()),
                                     _ => {} // Other events, keep waiting
@@ -1170,60 +1192,67 @@ async fn run_client(
                             }
                             Ok(Err(e)) => return Err(format!("read error: {e}").into()),
                             Err(_) => {
-                                eprintln!("error: timeout waiting for agent to exit");
+                                eprintln!("error: timeout waiting for agent(s) to exit");
                                 std::process::exit(1);
                             }
                         }
                     }
-                    exit_code
-                };
+                }
 
-                // If other conditions are specified, check the final snapshot
-                let has_other_conditions = contains.is_some() || pattern.is_some() || stable.is_some();
-                if has_other_conditions || print {
-                    let response = client
-                        .request(Request::Snapshot {
-                            id: id.clone(),
-                            strip_colors: true,
-                        })
-                        .await?;
+                // For single-agent: check screen conditions and print
+                if ids.len() == 1 {
+                    let id = &ids[0];
+                    if has_screen_conditions || print {
+                        let response = client
+                            .request(Request::Snapshot {
+                                id: id.clone(),
+                                strip_colors: true,
+                            })
+                            .await?;
 
-                    let snapshot = match response {
-                        Response::Snapshot { content, .. } => content,
-                        Response::Error { message } => return Err(message.into()),
-                        _ => return Err("unexpected response".into()),
-                    };
+                        let snapshot = match response {
+                            Response::Snapshot { content, .. } => content,
+                            Response::Error { message } => return Err(message.into()),
+                            _ => return Err("unexpected response".into()),
+                        };
 
-                    if let Some(ref needle) = contains {
-                        if !snapshot.contains(needle) {
-                            eprintln!("error: output does not contain: {needle:?}");
-                            std::process::exit(1);
+                        if let Some(ref needle) = contains {
+                            if !snapshot.contains(needle) {
+                                eprintln!("error: output does not contain: {needle:?}");
+                                std::process::exit(1);
+                            }
                         }
-                    }
 
-                    if let Some(ref pat) = pattern {
-                        if pat.len() > 1000 {
-                            return Err("regex pattern too long (max 1000 chars)".into());
+                        if let Some(ref pat) = pattern {
+                            if pat.len() > 1000 {
+                                return Err("regex pattern too long (max 1000 chars)".into());
+                            }
+                            let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
+                            if !re.is_match(&snapshot) {
+                                eprintln!("error: output does not match pattern: {pat:?}");
+                                std::process::exit(1);
+                            }
                         }
-                        let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
-                        if !re.is_match(&snapshot) {
-                            eprintln!("error: output does not match pattern: {pat:?}");
-                            std::process::exit(1);
-                        }
-                    }
 
-                    if print {
-                        println!("{snapshot}");
+                        if print {
+                            println!("{snapshot}");
+                        }
                     }
                 }
 
-                // Propagate exit code
-                let code = exit_code.unwrap_or(0);
-                if code != 0 {
-                    std::process::exit(code);
+                // Propagate worst exit code
+                let worst_code = exit_codes
+                    .values()
+                    .filter_map(|c| *c)
+                    .filter(|c| *c != 0)
+                    .max()
+                    .unwrap_or(0);
+                if worst_code != 0 {
+                    std::process::exit(worst_code);
                 }
             } else {
-                // Original snapshot-polling approach
+                // Original snapshot-polling approach (single agent only)
+                let id = &ids[0];
                 let poll_interval = Duration::from_millis(50);
 
                 let mut last_snapshot = String::new();
@@ -2003,6 +2032,9 @@ async fn run_view_command(
         // Reattach: session already exists, just reconcile panes
         tracing::info!("Reattaching to existing botty session");
 
+        // Ensure remain-on-exit is set (may be missing if session was created by older version)
+        view.ensure_remain_on_exit();
+
         let existing_panes = view.discover_existing_panes()?;
 
         // Add panes for agents that are running but don't have a pane yet
@@ -2155,6 +2187,10 @@ async fn run_view_event_loop(
                 Response::Event(Event::AgentSpawned { id, command, labels, .. }) => {
                     let was_empty = view.is_empty();
                     if let Err(e) = view.add_pane(&id) {
+                        if !view.session_exists() {
+                            tracing::info!("tmux session gone, exiting event loop");
+                            break;
+                        }
                         tracing::warn!("Failed to add pane for {}: {}", id, e);
                     }
                     view.set_pane_metadata(&id, &command.join(" "), &labels);
@@ -2162,6 +2198,10 @@ async fn run_view_event_loop(
                     // retile so it fills the window properly
                     if was_empty {
                         if let Err(e) = view.retile() {
+                            if !view.session_exists() {
+                                tracing::info!("tmux session gone, exiting event loop");
+                                break;
+                            }
                             tracing::warn!("Failed to retile after placeholder transition: {}", e);
                         }
                     }
@@ -2173,10 +2213,18 @@ async fn run_view_event_loop(
                     if view.pane_count() == 1 {
                         view.clear_pane_tracking();
                         if let Err(e) = view.show_waiting_placeholder() {
+                            if !view.session_exists() {
+                                tracing::info!("tmux session gone, exiting event loop");
+                                break;
+                            }
                             tracing::warn!("Failed to show placeholder: {}", e);
                         }
                     } else {
                         if let Err(e) = view.remove_pane(&id) {
+                            if !view.session_exists() {
+                                tracing::info!("tmux session gone, exiting event loop");
+                                break;
+                            }
                             tracing::warn!("Failed to remove pane for {}: {}", id, e);
                         }
                     }
