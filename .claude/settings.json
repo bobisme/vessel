@@ -1,83 +1,50 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/check-jj.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/init-agent.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/claim-agent.sh"
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/check-jj.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/init-agent.sh"
-          }
-        ]
-      }
-    ],
     "PostToolUse": [
       {
-        "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/claim-agent.sh"
+            "command": [
+              "botbox",
+              "hooks",
+              "run",
+              "check-bus-inbox",
+              "--project-root",
+              "/home/bob/src/botty/ws/default"
+            ],
+            "type": "command"
           }
-        ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/check-bus-inbox.sh"
-          }
-        ]
+        ],
+        "matcher": ""
       }
     ],
-    "SessionEnd": [
+    "SessionStart": [
       {
-        "matcher": "",
         "hooks": [
           {
-            "type": "command",
-            "command": "/home/bob/src/botty/ws/default/.agents/botbox/hooks/claim-agent.sh"
+            "command": [
+              "botbox",
+              "hooks",
+              "run",
+              "init-agent",
+              "--project-root",
+              "/home/bob/src/botty/ws/default"
+            ],
+            "type": "command"
+          },
+          {
+            "command": [
+              "botbox",
+              "hooks",
+              "run",
+              "check-jj",
+              "--project-root",
+              "/home/bob/src/botty/ws/default"
+            ],
+            "type": "command"
           }
-        ]
+        ],
+        "matcher": ""
       }
     ]
   }
