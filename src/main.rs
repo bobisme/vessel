@@ -1111,8 +1111,11 @@ async fn run_client(
                 return Err("at least one agent ID is required".into());
             }
 
-            let timeout_duration = Duration::from_secs(timeout);
-            let deadline = Instant::now() + timeout_duration;
+            let deadline = if timeout > 0 {
+                Some(Instant::now() + Duration::from_secs(timeout))
+            } else {
+                None
+            };
 
             // Screen-based conditions only work with a single agent
             let has_screen_conditions = contains.is_some() || pattern.is_some() || stable.is_some();
@@ -1169,19 +1172,33 @@ async fn run_client(
                     json.push('\n');
                     writer.write_all(json.as_bytes()).await?;
 
+                    let mut line = String::new();
                     while !pending.is_empty() {
-                        if Instant::now() >= deadline {
-                            eprintln!("error: timeout waiting for agent(s) to exit");
-                            std::process::exit(1);
+                        if let Some(dl) = deadline {
+                            if Instant::now() >= dl {
+                                eprintln!("error: timeout waiting for agent(s) to exit");
+                                std::process::exit(1);
+                            }
                         }
 
-                        let remaining = deadline - Instant::now();
-                        let mut line = String::new();
-                        match tokio::time::timeout(remaining, reader.read_line(&mut line)).await {
-                            Ok(Ok(0)) => {
+                        let read_fut = reader.read_line(&mut line);
+                        let result = if let Some(dl) = deadline {
+                            let remaining = dl - Instant::now();
+                            match tokio::time::timeout(remaining, read_fut).await {
+                                Ok(r) => r,
+                                Err(_) => {
+                                    eprintln!("error: timeout waiting for agent(s) to exit");
+                                    std::process::exit(1);
+                                }
+                            }
+                        } else {
+                            read_fut.await
+                        };
+                        match result {
+                            Ok(0) => {
                                 return Err("server closed connection while waiting".into());
                             }
-                            Ok(Ok(_)) => {
+                            Ok(_) => {
                                 let response: Response = serde_json::from_str(&line)?;
                                 match response {
                                     Response::Event(Event::AgentExited { ref id, exit_code }) if pending.contains(id) => {
@@ -1192,12 +1209,9 @@ async fn run_client(
                                     _ => {} // Other events, keep waiting
                                 }
                             }
-                            Ok(Err(e)) => return Err(format!("read error: {e}").into()),
-                            Err(_) => {
-                                eprintln!("error: timeout waiting for agent(s) to exit");
-                                std::process::exit(1);
-                            }
+                            Err(e) => return Err(format!("read error: {e}").into()),
                         }
+                        line.clear();
                     }
                 }
 
@@ -1261,8 +1275,10 @@ async fn run_client(
                 let mut stable_since = Instant::now();
 
                 loop {
-                    if Instant::now() >= deadline {
-                        return Err("timeout waiting for condition".into());
+                    if let Some(dl) = deadline {
+                        if Instant::now() >= dl {
+                            return Err("timeout waiting for condition".into());
+                        }
                     }
 
                     let response = client

@@ -457,8 +457,8 @@ SUBAGENT WORKFLOW:
         #[arg(long, value_name = "MILLIS")]
         stable: Option<u64>,
 
-        /// Timeout in seconds.
-        #[arg(long, short, default_value = "30")]
+        /// Timeout in seconds (0 = wait forever).
+        #[arg(long, short, default_value = "0")]
         timeout: u64,
 
         /// Print the snapshot when condition is met.
