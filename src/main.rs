@@ -675,13 +675,15 @@ async fn run_client(
             id,
             text,
             newline,
+            enter,
             format,
             json,
         } => {
             let request = Request::Send {
                 id: id.clone(),
-                data: text,
+                data: text.unwrap_or_default(),
                 newline,
+                enter,
             };
             let response = client.request(request).await?;
 
@@ -1554,6 +1556,7 @@ async fn run_client(
                     id: agent_id.clone(),
                     data: full_cmd,
                     newline: false, // Already has newline
+                    enter: false,
                 })
                 .await?;
 

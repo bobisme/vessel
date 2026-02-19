@@ -121,9 +121,12 @@ pub enum Request {
         id: String,
         /// Text to send.
         data: String,
-        /// Whether to append a newline.
+        /// Whether to append a newline (LF).
         #[serde(default)]
         newline: bool,
+        /// Whether to append Enter key (CR).
+        #[serde(default)]
+        enter: bool,
     },
 
     /// Send raw bytes to an agent.
@@ -515,6 +518,7 @@ mod tests {
                 id: "test-agent".into(),
                 data: "hello\n".into(),
                 newline: false,
+                enter: false,
             },
             Request::SendBytes {
                 id: "test-agent".into(),

@@ -515,11 +515,11 @@ async fn handle_request(
             }
         }
 
-        Request::Send { id, data, newline } => {
+        Request::Send { id, data, newline, enter } => {
             let mut mgr = manager.lock().await;
             if let Some(agent) = mgr.get_mut(&id) {
                 // Record the command before sending
-                let payload = if newline {
+                let payload = if newline || enter {
                     format!("{data}\n")
                 } else {
                     data.clone()
@@ -529,6 +529,9 @@ async fn handle_request(
                 let mut bytes = data.into_bytes();
                 if newline {
                     bytes.push(b'\n');
+                }
+                if enter {
+                    bytes.push(b'\r');
                 }
 
                 // Write to PTY master

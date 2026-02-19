@@ -269,17 +269,22 @@ pub enum Command {
     },
 
     /// Send text to an agent (literal, no newline by default).
-    /// Use --newline to append newline (like pressing Enter).
+    /// Use --newline to append a newline character, or --enter to append
+    /// a carriage return (like pressing Enter in a terminal).
     Send {
         /// Agent ID.
         id: String,
 
-        /// Text to send.
-        text: String,
+        /// Text to send (optional when using --enter).
+        text: Option<String>,
 
-        /// Append a newline after the text (simulates pressing Enter).
+        /// Append a newline (LF) after the text.
         #[arg(short = 'n', long)]
         newline: bool,
+
+        /// Append Enter key (CR) after the text. Equivalent to send-keys enter.
+        #[arg(short = 'e', long)]
+        enter: bool,
 
         /// Output format: text, json, or pretty.
         #[arg(long)]

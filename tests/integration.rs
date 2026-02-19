@@ -181,6 +181,7 @@ async fn test_spawn_send_snapshot() {
             id: agent_id.clone(),
             data: "echo BOTTY_TEST_OUTPUT".into(),
             newline: true,
+            enter: false,
         })
         .await
         .expect("send failed");

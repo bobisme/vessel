@@ -196,6 +196,7 @@ impl AgentHandle {
             id: self.id.clone(),
             data: text.to_string(),
             newline,
+            enter: false,
         };
 
         let response = self
