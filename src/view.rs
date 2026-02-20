@@ -214,8 +214,9 @@ impl TmuxView {
         // 3. Properly handles cursor positioning and scroll regions
         //
         // Pane runs attach --readonly, which exits when the agent exits.
-        // Dead pane cleanup is handled by the tmux pane-died hook
-        // (set up in setup_pane_died_hook), not by a sleep wrapper.
+        // Dead pane cleanup is handled by the view event loop (AgentExited),
+        // not by the tmux pane-died hook, to avoid races during mass exit.
+        // The pane-died hook only respawns the last pane as placeholder.
         let tail_cmd = format!(
             "{} attach --readonly '{}'",
             self.botty_path, agent_id

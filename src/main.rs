@@ -2496,9 +2496,13 @@ fn setup_pane_died_hook(_view: &TmuxView) -> Result<(), ViewError> {
         ])
         .status();
 
-    // pane-died hook: if last pane, respawn as placeholder; otherwise kill the dead pane.
-    // tmux sets the target to the dead pane, so kill-pane/respawn-pane act on it.
-    let hook_cmd = r#"if-shell -F '#{==:#{window_panes},1}' "respawn-pane -k 'printf \"\\033[2J\\033[H\\033[90mWaiting for agents...\\033[0m\"; sleep 3600'" 'kill-pane'"#;
+    // pane-died hook: if last pane, respawn as placeholder.
+    // We do NOT kill the pane here, because that creates a race condition when multiple
+    // agents exit simultaneously (e.g. kill --all). If multiple panes try to kill themselves
+    // thinking they are not the last one, we end up with 0 panes and the session dies.
+    // Instead, we let the view event loop handle pane removal via AgentExited events,
+    // which are processed sequentially.
+    let hook_cmd = r#"if-shell -F '#{==:#{window_panes},1}' "respawn-pane -k 'printf \"\\033[2J\\033[H\\033[90mWaiting for agents...\\033[0m\"; sleep 3600'""#;
 
     let _ = Command::new("tmux")
         .args([
