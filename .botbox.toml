@@ -13,7 +13,7 @@ channel = "botty"
 
 # Companion tools to enable
 [tools]
-beads = true
+bones = true
 maw = true
 crit = true
 botbus = true

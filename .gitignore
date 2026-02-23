@@ -1,7 +1,7 @@
 /target
 
 # bv (beads viewer) local config and caches
-.bv/
+.bones/
 
 # BotBus agent coordination state (session-specific)
 .botbus/
