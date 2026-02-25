@@ -675,8 +675,14 @@ async fn handle_request(
                 if let Err(e) = agent.pty.resize(rows, cols) {
                     return Response::error(format!("resize failed: {e}"));
                 }
-                // Update the screen model
+                // Update the screen model — resize creates a fresh parser,
+                // so replay transcript to restore screen state
                 agent.screen.resize(rows, cols);
+                if !clear_transcript {
+                    for entry in agent.transcript.all() {
+                        agent.screen.process(&entry.data);
+                    }
+                }
                 // Optionally clear transcript (useful for view mode to avoid
                 // displaying output rendered at old size)
                 if clear_transcript {

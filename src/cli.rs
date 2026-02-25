@@ -346,7 +346,7 @@ pub enum Command {
         id: String,
 
         /// Number of lines to show.
-        #[arg(short = 'n', default_value = "10")]
+        #[arg(short = 'n', long, default_value = "10")]
         lines: usize,
 
         /// Follow output (like tail -f).
