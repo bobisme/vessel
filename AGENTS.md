@@ -61,7 +61,7 @@ Reviewer roles: security
 1. **Create a bone** to track your work: `maw exec default -- bn create --title "..." --description "..."`
 2. **Create a workspace** for your changes: `maw ws create --random` — this gives you `ws/<name>/`
 3. **Edit files in your workspace** (`ws/<name>/`), never in `ws/default/`
-4. **Merge when done**: `maw ws merge <name> --destroy`
+4. **Merge when done**: `maw ws merge <name> --destroy --message "feat: <bone-title>"` (use conventional commit prefix: `feat:`, `fix:`, `chore:`, etc.)
 5. **Close the bone**: `maw exec default -- bn done <id>`
 
 Do not create git branches manually — `maw ws create` handles branching for you. See [worker-loop.md](.agents/botbox/worker-loop.md) for the full triage → start → work → finish cycle.
@@ -80,8 +80,7 @@ project-root/          ← bare repo (no source files here)
 │   └── amber-reef/    ← another agent workspace
 ├── .manifold/         ← maw metadata/artifacts
 ├── .git/              ← git data (core.bare=true)
-├── AGENTS.md          ← stub redirecting to ws/default/AGENTS.md
-└── CLAUDE.md          ← symlink → AGENTS.md
+└── AGENTS.md          ← stub redirecting to ws/default/AGENTS.md
 ```
 
 **Key rules:**
@@ -118,7 +117,7 @@ Identity resolved from `$AGENT` env. No flags needed in agent loops.
 | Create workspace | `maw ws create <name>` |
 | List workspaces | `maw ws list` |
 | Check merge readiness | `maw ws merge <name> --check` |
-| Merge to main | `maw ws merge <name> --destroy` |
+| Merge to main | `maw ws merge <name> --destroy --message "feat: <bone-title>"` |
 | Destroy (no merge) | `maw ws destroy <name>` |
 | Run command in workspace | `maw exec <name> -- <command>` |
 | Diff workspace vs epoch | `maw ws diff <name>` |
@@ -138,7 +137,7 @@ maw ws diff <name>                        # diff vs epoch (maw-native)
 **Lead agent merge workflow** — after a worker finishes a bone:
 1. `maw ws list` — look for `active (+N to merge)` entries
 2. `maw ws merge <name> --check` — verify no conflicts
-3. `maw ws merge <name> --destroy` — merge and clean up
+3. `maw ws merge <name> --destroy --message "feat: <bone-title>"` — merge and clean up (use conventional commit prefix)
 
 **Workspace safety:**
 - Never merge or destroy `default`.
