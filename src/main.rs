@@ -2123,16 +2123,33 @@ async fn run_view_command(
         // Ensure remain-on-exit is set (may be missing if session was created by older version)
         view.ensure_remain_on_exit();
 
+        // Re-register pane-died hook (may be missing if session was created by older version)
+        setup_pane_died_hook(&view)?;
+
         let existing_panes = view.discover_existing_panes()?;
 
         // Add panes for agents that are running but don't have a pane yet
         // (spawned while we were detached)
+        let running_ids: std::collections::HashSet<&str> = current_agents.iter().map(|a| a.id.as_str()).collect();
         for agent in &current_agents {
             if !existing_panes.contains(&agent.id) {
                 view.add_pane(&agent.id)?;
             }
             // Always update metadata (command/labels may have been set after initial spawn)
             view.set_pane_metadata(&agent.id, &agent.command.join(" "), &agent.labels);
+        }
+
+        // Respawn dead panes whose agents are still running
+        // (e.g., attach process died due to server restart while detached)
+        if let Ok(dead_panes) = view.find_dead_panes() {
+            for (pane_id, agent_id) in &dead_panes {
+                if running_ids.contains(agent_id.as_str()) {
+                    tracing::info!("Respawning dead pane {} for running agent {}", pane_id, agent_id);
+                    if let Err(e) = view.respawn_pane(pane_id, agent_id) {
+                        tracing::warn!("Failed to respawn pane for {}: {}", agent_id, e);
+                    }
+                }
+            }
         }
     } else {
         // Fresh session — kill stale session if --new-session was passed
@@ -2551,10 +2568,11 @@ fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
 /// (if it's the last pane, to keep the session alive).
 ///
 /// Scoped to the botty session — does not affect other tmux sessions.
-fn setup_pane_died_hook(_view: &TmuxView) -> Result<(), ViewError> {
+fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     use std::process::Command;
 
     let session_name = "botty";
+    let botty_path = view.botty_path();
 
     // Enable remain-on-exit so pane-died hook fires (instead of pane being
     // destroyed immediately, which would skip the hook entirely)
@@ -2565,18 +2583,37 @@ fn setup_pane_died_hook(_view: &TmuxView) -> Result<(), ViewError> {
         ])
         .status();
 
-    // pane-died hook: if last pane, respawn as placeholder.
-    // We do NOT kill the pane here, because that creates a race condition when multiple
-    // agents exit simultaneously (e.g. kill --all). If multiple panes try to kill themselves
-    // thinking they are not the last one, we end up with 0 panes and the session dies.
-    // Instead, we let the view event loop handle pane removal via AgentExited events,
-    // which are processed sequentially.
-    let hook_cmd = r#"if-shell -F '#{==:#{window_panes},1}' "respawn-pane -k 'printf \"\\033[2J\\033[H\\033[90mWaiting for agents...\\033[0m\"; sleep 3600'""#;
+    // pane-died hook: try to respawn the attach process if the agent is still running.
+    //
+    // When a pane's `botty attach --readonly` process dies (e.g., server restart,
+    // connection hiccup), the pane goes stale while the agent keeps running.
+    // This hook auto-reconnects by respawning the attach command.
+    //
+    // Flow:
+    // 1. If @agent_id is set on the pane, try to respawn with attach --readonly.
+    //    If the agent has exited, attach will fail and pane dies again — the view
+    //    event loop processes AgentExited and removes the pane. A short sleep
+    //    prevents tight respawn loops in that case.
+    // 2. If @agent_id is empty (placeholder pane) and it's the last pane,
+    //    respawn as the waiting placeholder.
+    // 3. Otherwise, do nothing — let the view event loop handle cleanup.
+    // Use run-shell so tmux expands format variables (#{@agent_id}, #{window_panes},
+    // #{pane_id}) before passing to the shell. This avoids nested if-shell quoting.
+    #[allow(clippy::literal_string_with_formatting_args)]
+    let hook_cmd = format!(
+        "run-shell 'AID=\"#{{@agent_id}}\"; \
+         if [ -n \"$AID\" ]; then \
+           tmux respawn-pane -k -t \"#{{pane_id}}\" \"{botty} attach --readonly \\\"$AID\\\" || sleep 2\"; \
+         elif [ \"#{{window_panes}}\" = \"1\" ]; then \
+           tmux respawn-pane -k -t \"#{{pane_id}}\" \"printf \\\"\\033[2J\\033[H\\033[90mWaiting for agents...\\033[0m\\\"; sleep 3600\"; \
+         fi'",
+        botty = botty_path
+    );
 
     let _ = Command::new("tmux")
         .args([
             "set-hook", "-t", session_name,
-            "pane-died", hook_cmd,
+            "pane-died", &hook_cmd,
         ])
         .status();
 

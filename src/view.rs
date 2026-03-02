@@ -676,6 +676,62 @@ impl TmuxView {
         Ok(found)
     }
 
+    /// Find panes with dead processes that need respawning.
+    /// Returns a list of (pane_id, agent_id) pairs where the pane process has exited.
+    /// Uses tmux's `pane_dead` format variable to detect dead panes.
+    pub fn find_dead_panes(&self) -> Result<Vec<(String, String)>, ViewError> {
+        #[allow(clippy::literal_string_with_formatting_args)]
+        let format_str = "#{pane_id}:#{@agent_id}:#{pane_dead}";
+
+        let session_window = format!("{}:agents", self.session_name);
+        let output = match self.mode {
+            ViewMode::Panes => Command::new("tmux")
+                .args(["list-panes", "-t", &session_window, "-F", format_str])
+                .output()?,
+            ViewMode::Windows => Command::new("tmux")
+                .args(["list-panes", "-s", "-t", &self.session_name, "-F", format_str])
+                .output()?,
+        };
+
+        let mut dead = Vec::new();
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.splitn(3, ':').collect();
+                if parts.len() >= 3 {
+                    let pane_id = parts[0];
+                    let agent_id = parts[1];
+                    let is_dead = parts[2] == "1";
+                    if is_dead && !agent_id.is_empty() {
+                        dead.push((pane_id.to_string(), agent_id.to_string()));
+                    }
+                }
+            }
+        }
+
+        Ok(dead)
+    }
+
+    /// Respawn a dead pane with a fresh attach command.
+    pub fn respawn_pane(&self, pane_id: &str, agent_id: &str) -> Result<(), ViewError> {
+        let attach_cmd = format!(
+            "{} attach --readonly '{}'",
+            self.botty_path, agent_id
+        );
+
+        let status = Command::new("tmux")
+            .args(["respawn-pane", "-k", "-t", pane_id, &attach_cmd])
+            .status()?;
+
+        if !status.success() {
+            return Err(ViewError::TmuxFailed(
+                format!("failed to respawn pane {} for agent {}", pane_id, agent_id),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Get the sizes of all panes/windows, keyed by agent ID.
     /// Uses @agent_id pane option which is immune to programs overwriting titles.
     /// Returns a map of agent_id -> (rows, cols).

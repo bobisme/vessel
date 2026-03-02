@@ -146,6 +146,18 @@ impl Server {
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
+        // Set up OS signal handlers so the server shuts down gracefully
+        // instead of dying instantly (which orphans/kills all agents).
+        let mut sigterm = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::terminate(),
+        ).map_err(|e| ServerError::Io(e))?;
+        let mut sigint = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::interrupt(),
+        ).map_err(|e| ServerError::Io(e))?;
+        let mut sighup = tokio::signal::unix::signal(
+            tokio::signal::unix::SignalKind::hangup(),
+        ).map_err(|e| ServerError::Io(e))?;
+
         loop {
             tokio::select! {
                 result = listener.accept() => {
@@ -167,8 +179,93 @@ impl Server {
                     }
                 }
                 _ = shutdown_rx.recv() => {
-                    info!("Shutdown signal received");
+                    info!("Shutdown signal received (internal)");
                     break;
+                }
+                _ = sigterm.recv() => {
+                    // SIGTERM: only shut down if no agents are running.
+                    // Exiting would close master PTY fds and kill all agents.
+                    let mgr = self.manager.lock().await;
+                    let running = mgr.list().filter(|a| a.is_running()).count();
+                    drop(mgr);
+                    if running > 0 {
+                        warn!("SIGTERM received but {} agents still running — ignoring \
+                               (use `botty shutdown` to force)", running);
+                    } else {
+                        info!("SIGTERM received with no running agents, shutting down");
+                        break;
+                    }
+                }
+                _ = sigint.recv() => {
+                    let mgr = self.manager.lock().await;
+                    let running = mgr.list().filter(|a| a.is_running()).count();
+                    drop(mgr);
+                    if running > 0 {
+                        warn!("SIGINT received but {} agents still running — ignoring \
+                               (use `botty shutdown` to force)", running);
+                    } else {
+                        info!("SIGINT received with no running agents, shutting down");
+                        break;
+                    }
+                }
+                _ = sighup.recv() => {
+                    // SIGHUP: parent terminal closed. Keep running if agents are alive.
+                    let mgr = self.manager.lock().await;
+                    let running = mgr.list().filter(|a| a.is_running()).count();
+                    drop(mgr);
+                    if running > 0 {
+                        info!("SIGHUP received but {} agents still running, ignoring", running);
+                    } else {
+                        info!("SIGHUP received with no running agents, shutting down");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Gracefully shut down running agents: SIGTERM → wait → SIGKILL
+        {
+            let mgr = self.manager.lock().await;
+            let running: Vec<String> = mgr.list()
+                .filter(|a| a.is_running())
+                .map(|a| a.id.clone())
+                .collect();
+
+            if !running.is_empty() {
+                info!("Sending SIGTERM to {} running agent(s)", running.len());
+                for id in &running {
+                    if let Some(agent) = mgr.get(id) {
+                        let _ = agent.pty.signal(Signal::SIGTERM);
+                    }
+                }
+                drop(mgr);
+
+                // Wait up to 5 seconds for agents to exit
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let mgr = self.manager.lock().await;
+                    let still_running = running.iter()
+                        .filter(|id| mgr.get(id).map_or(false, |a| a.is_running()))
+                        .count();
+                    drop(mgr);
+
+                    if still_running == 0 {
+                        info!("All agents exited gracefully");
+                        break;
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        warn!("{} agent(s) did not exit in time, sending SIGKILL", still_running);
+                        let mgr = self.manager.lock().await;
+                        for id in &running {
+                            if let Some(agent) = mgr.get(id) {
+                                if agent.is_running() {
+                                    let _ = agent.pty.signal(Signal::SIGKILL);
+                                }
+                            }
+                        }
+                        break;
+                    }
                 }
             }
         }
