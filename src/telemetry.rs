@@ -65,14 +65,58 @@ pub fn init(verbose: bool) -> TelemetryGuard {
 }
 
 /// Default tracing: human-readable fmt to stderr (botty's existing behavior).
+///
+/// If `BOTTY_LOG` is set to a file path, logs are also written there (appended).
+/// The file log always uses `botty=info` minimum so server lifecycle events
+/// are captured even without `--verbose`.
 fn init_fmt(verbose: bool) -> TelemetryGuard {
-    let default = if verbose { "botty=debug" } else { "botty=warn" };
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+    let default = if verbose { "botty=debug" } else { "botty=warn" };
+    let stderr_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(default));
+
+    if let Some(log_path) = std::env::var("BOTTY_LOG").ok().filter(|s| !s.is_empty()) {
+        // Open log file (append mode, create if missing)
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            Ok(file) => {
+                // When logging to a file, bump the filter to at least info so
+                // server lifecycle events are always captured.
+                let filter = if verbose {
+                    EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| EnvFilter::new("botty=debug"))
+                } else {
+                    EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| EnvFilter::new("botty=info"))
+                };
+
+                let file = std::sync::Mutex::new(file);
+                tracing_subscriber::fmt()
+                    .with_env_filter(filter)
+                    .with_ansi(false)
+                    .with_writer(file)
+                    .init();
+            }
+            Err(e) => {
+                // Fall back to stderr-only, but warn about it
+                eprintln!("warning: BOTTY_LOG={log_path}: {e}");
+                tracing_subscriber::fmt()
+                    .with_env_filter(stderr_filter)
+                    .with_writer(std::io::stderr)
+                    .init();
+            }
+        }
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(stderr_filter)
+            .with_writer(std::io::stderr)
+            .init();
+    }
 
     TelemetryGuard {
         #[cfg(feature = "otel")]
