@@ -232,15 +232,36 @@ async fn run_server(
     socket_path: std::path::PathBuf,
     daemon: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if daemon {
-        // Fork to background
-        // For now, we don't actually daemonize - the caller handles that
-        // TODO: proper daemonization
+    // When running as --daemon, escape into our own systemd scope so that
+    // killing the originating pane/terminal doesn't take us down.
+    if daemon && !in_botty_scope() && botty::has_systemd_run() {
+        tracing::info!("Re-execing into botty-server.scope via systemd-run");
+        let exe = std::env::current_exe()?;
+        let status = std::process::Command::new("systemd-run")
+            .args(["--user", "--scope", "--collect", "--unit=botty-server", "--"])
+            .arg(&exe)
+            .arg("server")
+            .arg("--daemon")
+            .args(["--socket", socket_path.to_str().unwrap_or_default()])
+            .status()?;
+        // If systemd-run succeeded, we're done — the child is the real server.
+        if status.success() {
+            return Ok(());
+        }
+        // Otherwise fall through and run in-process.
+        tracing::warn!("systemd-run re-exec failed (status {status}), running in-process");
     }
 
     let mut server = Server::new(socket_path);
     server.run().await?;
     Ok(())
+}
+
+/// Check if we're already running inside a botty-owned systemd scope.
+fn in_botty_scope() -> bool {
+    std::fs::read_to_string("/proc/self/cgroup")
+        .map(|cg| cg.contains("botty-server.scope"))
+        .unwrap_or(false)
 }
 
 async fn run_doctor(

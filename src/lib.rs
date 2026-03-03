@@ -17,6 +17,23 @@ pub mod telemetry;
 pub mod testing;
 pub mod view;
 
+/// Check whether `systemd-run --user` is available.
+///
+/// Result is cached after the first call (process-lifetime).
+pub fn has_systemd_run() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        std::process::Command::new("systemd-run")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
 pub use attach::{run_attach, AttachConfig, AttachError};
 pub use cli::{parse_key_notation, parse_key_sequence, Cli, Command};
 pub use client::{default_socket_path, Client, ClientError};

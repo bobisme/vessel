@@ -443,38 +443,13 @@ async fn handle_request(
                 None
             };
 
-            // Wrap command in systemd-run for cgroup memory limits if requested
-            let effective_cmd = if let Some(ref limit) = memory_limit {
-                // Check if systemd-run is available
-                let has_systemd = std::process::Command::new("systemd-run")
-                    .arg("--version")
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
-
-                if has_systemd {
-                    let mut wrapped = vec![
-                        "systemd-run".to_string(),
-                        "--user".to_string(),
-                        "--scope".to_string(),
-                        "-p".to_string(),
-                        format!("MemoryMax={limit}"),
-                        "-p".to_string(),
-                        "MemorySwapMax=0".to_string(),
-                        "--".to_string(),
-                    ];
-                    wrapped.extend(cmd.iter().cloned());
-                    info!(%limit, "Wrapping spawn with systemd-run cgroup limit");
-                    wrapped
-                } else {
-                    warn!("--memory-limit requested but systemd-run not available; spawning without cgroup limits");
-                    cmd.clone()
-                }
-            } else {
-                cmd.clone()
-            };
+            // Wrap command in systemd-run to isolate each agent in its own
+            // cgroup scope. This prevents pane/terminal death from killing
+            // agents and provides per-agent resource isolation.
+            // The agent ID is used below to derive the unit name, so we need
+            // to resolve it first — but we also need the lock for that. We'll
+            // build effective_cmd after resolving the ID (see below).
+            let wrap_memory_limit = memory_limit.clone();
 
             // Validate and resolve agent ID
             // Hold the lock across the entire check+spawn+add to prevent races.
@@ -506,6 +481,38 @@ async fn handle_request(
                 custom_name
             } else {
                 mgr.generate_id()
+            };
+
+            // Build the effective command — wrap in systemd-run for cgroup isolation
+            let effective_cmd = if crate::has_systemd_run() {
+                // Sanitize agent ID for systemd unit name: replace / with -
+                let unit_id = id.replace('/', "-");
+                let mut wrapped = vec![
+                    "systemd-run".to_string(),
+                    "--user".to_string(),
+                    "--scope".to_string(),
+                    "--collect".to_string(),
+                    format!("--unit=botty-agent-{unit_id}"),
+                ];
+                if let Some(ref limit) = wrap_memory_limit {
+                    wrapped.extend([
+                        "-p".to_string(),
+                        format!("MemoryMax={limit}"),
+                        "-p".to_string(),
+                        "MemorySwapMax=0".to_string(),
+                    ]);
+                    info!(%limit, %id, "Wrapping spawn with systemd-run scope + memory limit");
+                } else {
+                    info!(%id, "Wrapping spawn with systemd-run scope");
+                }
+                wrapped.push("--".to_string());
+                wrapped.extend(cmd.iter().cloned());
+                wrapped
+            } else {
+                if wrap_memory_limit.is_some() {
+                    warn!("--memory-limit requested but systemd-run not available; spawning without cgroup limits");
+                }
+                cmd.clone()
             };
 
             let spawn_env = pty::SpawnEnv {

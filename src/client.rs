@@ -4,6 +4,7 @@
 
 #![allow(unsafe_code)] // getuid() call
 
+use crate::has_systemd_run;
 use crate::protocol::{Request, Response};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -125,14 +126,34 @@ impl Client {
     }
 
     /// Start the server as a background process.
+    ///
+    /// Attempts to launch the server in its own systemd scope so it survives
+    /// the death of the calling pane's cgroup. Falls back to a bare spawn if
+    /// `systemd-run` is not available.
     #[allow(clippy::unused_async)] // async for API consistency with other methods
     async fn start_server(&self) -> Result<(), ClientError> {
         info!("Starting server...");
 
-        // Get the path to the current executable
         let exe = std::env::current_exe().map_err(ClientError::ServerStart)?;
 
-        // Spawn server in background
+        // Try launching in a dedicated systemd scope first
+        if has_systemd_run() {
+            info!("Launching server via systemd-run --scope");
+            let result = Command::new("systemd-run")
+                .args(["--user", "--scope", "--collect", "--unit=botty-server", "--"])
+                .arg(&exe)
+                .args(["server", "--daemon"])
+                .spawn();
+
+            match result {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    warn!("systemd-run failed, falling back to bare spawn: {e}");
+                }
+            }
+        }
+
+        // Fallback: bare spawn (inherits caller's cgroup)
         Command::new(&exe)
             .arg("server")
             .arg("--daemon")
