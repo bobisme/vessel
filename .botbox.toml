@@ -1,7 +1,7 @@
 #:schema https://raw.githubusercontent.com/bobisme/botbox/refs/heads/main/schemas/botbox.schema.json
 
 version = "1.0.13"
-push_main = false
+push_main = true
 
 [project]
 name = "botty"
@@ -9,6 +9,7 @@ type = ["cli"]
 languages = []
 default_agent = "botty-dev"
 channel = "botty"
+install_command = "maw exec default -- just install"
 
 # Companion tools to enable
 [tools]
@@ -54,16 +55,13 @@ timeout = 600
 # Each tier maps to a list of "provider/model:thinking" strings
 [models]
 fast = [
-    "anthropic/claude-haiku-4-5:low",
-    "google-gemini-cli/gemini-3-flash-preview:low",
-    "openai-codex/gpt-5.3-codex-spark:low",
+  "anthropic/claude-haiku-4-5:low",
+  "google-gemini-cli/gemini-3-flash-preview:low",
+  "openai-codex/gpt-5.3-codex-spark:low",
 ]
 balanced = [
-    "anthropic/claude-sonnet-4-6:medium",
-    "google-gemini-cli/gemini-3-pro-preview:medium",
-    "openai-codex/gpt-5.3-codex:medium",
+  "anthropic/claude-sonnet-4-6:medium",
+  "google-gemini-cli/gemini-3-pro-preview:medium",
+  "openai-codex/gpt-5.3-codex:medium",
 ]
-strong = [
-    "anthropic/claude-opus-4-6:high",
-    "openai-codex/gpt-5.3-codex:xhigh",
-]
+strong = ["anthropic/claude-opus-4-6:high", "openai-codex/gpt-5.3-codex:xhigh"]

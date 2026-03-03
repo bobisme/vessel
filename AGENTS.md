@@ -126,6 +126,10 @@ Identity resolved from `$AGENT` env. No flags needed in agent loops.
 | Sync stale workspace | `maw ws sync <name>` |
 | Inspect merge conflicts | `maw ws conflicts <name>` |
 | Undo local workspace changes | `maw ws undo <name>` |
+| List recovery snapshots | `maw ws recover` |
+| Recover destroyed workspace | `maw ws recover <name> --to <new-name>` |
+| Search recovery snapshots | `maw ws recover --search <pattern>` |
+| Show file from snapshot | `maw ws recover <name> --show <path>` |
 
 **Inspecting a workspace (use git, not jj):**
 ```bash
@@ -143,6 +147,7 @@ maw ws diff <name>                        # diff vs epoch (maw-native)
 - Never merge or destroy `default`.
 - Always `maw ws merge <name> --check` before `--destroy`.
 - Commit workspace changes with `maw exec <name> -- git add -A && maw exec <name> -- git commit -m "..."`.
+- **No work is ever lost in maw.** Recovery snapshots are created automatically on every destroy. If a workspace was destroyed and you suspect code is missing, ALWAYS run `maw ws recover` before concluding work was lost. Never reopen a bone or start over without checking recovery first.
 
 ### Protocol Quick Reference
 
@@ -163,8 +168,9 @@ All commands support JSON output with `--format json` for parsing. If a command 
 
 - Create a bone before starting work. Update state: `open` → `doing` → `done`.
 - Post progress comments during work for crash recovery.
-- **Run checks before requesting review**: `just check` (or your project's build/test command). Fix any failures before proceeding.
+- **Run checks before committing**: `just check` (or your project's build/test command). Fix any failures before proceeding.
 - After finishing a bone, follow [finish.md](.agents/botbox/finish.md). **Workers: do NOT push** — the lead handles merges and pushes.
+- **Install locally** after releasing: `maw exec default -- just install`
 
 ### Identity
 
