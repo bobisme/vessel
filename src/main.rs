@@ -240,9 +240,9 @@ async fn run_server(
         let status = std::process::Command::new("systemd-run")
             .args(["--user", "--scope", "--collect", "--unit=botty-server", "--"])
             .arg(&exe)
+            .args(["--socket", socket_path.to_str().unwrap_or_default()])
             .arg("server")
             .arg("--daemon")
-            .args(["--socket", socket_path.to_str().unwrap_or_default()])
             .status()?;
         // If systemd-run succeeded, we're done — the child is the real server.
         if status.success() {

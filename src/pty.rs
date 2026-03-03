@@ -121,12 +121,14 @@ impl PtyProcess {
 /// These are captured from the server's environment at spawn time.
 /// Explicit `--env` values override these.
 const ESSENTIAL_ENV_VARS: &[&str] = &[
-    "PATH",   // command resolution
-    "HOME",   // home directory
-    "USER",   // current user
-    "TERM",   // terminal type (critical for PTY)
-    "SHELL",  // default shell
-    "LANG",   // locale / character encoding
+    "PATH",                    // command resolution
+    "HOME",                    // home directory
+    "USER",                    // current user
+    "TERM",                    // terminal type (critical for PTY)
+    "SHELL",                   // default shell
+    "LANG",                    // locale / character encoding
+    "XDG_RUNTIME_DIR",         // systemd, D-Bus, Wayland sockets
+    "DBUS_SESSION_BUS_ADDRESS", // systemd-run --user needs session bus
 ];
 
 /// Environment configuration for spawning.
