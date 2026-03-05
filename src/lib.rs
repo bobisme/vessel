@@ -12,6 +12,7 @@ pub mod client;
 pub mod output;
 pub mod protocol;
 pub mod pty;
+pub mod runtime;
 pub mod server;
 pub mod sys;
 pub mod telemetry;
