@@ -56,7 +56,23 @@ macro_rules! select {
 #[cfg(feature = "runtime-tokio")]
 pub(crate) use select;
 
-// ── asupersync backend (stubs — filled in during migration) ──────────────
+// ── asupersync backend ───────────────────────────────────────────────────
+
+// TODO(asupersync): The asupersync backend stubs below are scaffolding for
+// the runtime swap. They document the exact API mapping needed. Each module
+// maps tokio's ambient-authority API to asupersync's capability-based API
+// using Cx::current() to bridge the gap.
+//
+// Remaining work to activate this backend:
+//
+// 1. Mutex wrapper — Cx::current() + unwrap LockError
+// 2. broadcast wrapper — Cx::current() for send/recv
+// 3. select! macro — nested Select<A, Select<B, ...>> with Box::pin
+// 4. stdin/stdout — spawn_blocking shim over raw fd
+// 5. interval — async tick() wrapper using sleep
+// 6. spawn — global RuntimeHandle via OnceLock
+// 7. Entry point — RuntimeBuilder::new().build()?.block_on(...)
+// 8. read_line — standalone fn, not trait method (call-site changes)
 
 #[cfg(feature = "runtime-asupersync")]
 pub mod net {
@@ -69,7 +85,9 @@ pub mod net {
 #[cfg(feature = "runtime-asupersync")]
 pub mod io {
     pub use asupersync::io::{AsyncBufRead, AsyncReadExt, AsyncWriteExt, BufReader};
-    // TODO: stdin, stdout — ChildStdin/ChildStdout exist but may not cover raw terminal I/O
+    // read_line is a standalone function, not a trait method:
+    //   asupersync::io::read_line(reader, buf) -> ReadLine future
+    // stdin/stdout: no process-own stdio — use spawn_blocking shim
 }
 
 #[cfg(feature = "runtime-asupersync")]
@@ -81,16 +99,20 @@ pub mod sync {
 #[cfg(feature = "runtime-asupersync")]
 pub mod time {
     pub use std::time::Duration;
-    // TODO: sleep, timeout, interval wrappers around asupersync::time
+    // sleep: asupersync::time::sleep(wall_now(), duration)
+    // timeout: asupersync::time::timeout(wall_now(), duration, future)
+    // interval: asupersync::time::interval(wall_now(), period) — tick(now) is SYNC
+    // Instant: use std::time::Instant (asupersync uses its own Time type)
 }
 
 #[cfg(feature = "runtime-asupersync")]
 pub mod signal {
-    pub use asupersync::signal::{sigterm, sigwinch};
-    // TODO: map SignalKind-based API if needed
+    pub use asupersync::signal::{Signal, SignalKind, signal};
 }
 
 #[cfg(feature = "runtime-asupersync")]
 pub mod task {
-    // TODO: spawn (needs RuntimeHandle), spawn_blocking, JoinHandle
+    // spawn: RuntimeHandle::spawn(future) — need global handle
+    // spawn_blocking: asupersync::spawn_blocking(f) — standalone, no Cx needed
+    // JoinHandle: asupersync::runtime::JoinHandle
 }
