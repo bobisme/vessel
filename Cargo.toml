@@ -34,9 +34,8 @@ default = ["otel"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-appender-tracing", "dep:tracing-opentelemetry"]
 
 [lints.rust]
-# PTY operations require unsafe (fork, ioctl, fd manipulation)
-# We use #[allow(unsafe_code)] in specific modules that need it
-unsafe_code = "warn"
+# Unsafe is confined to src/pty.rs and src/sys.rs which #![allow(unsafe_code)]
+unsafe_code = "deny"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }

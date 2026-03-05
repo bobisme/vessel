@@ -13,6 +13,7 @@ pub mod output;
 pub mod protocol;
 pub mod pty;
 pub mod server;
+pub mod sys;
 pub mod telemetry;
 pub mod testing;
 pub mod view;

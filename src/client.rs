@@ -2,8 +2,6 @@
 //!
 //! Handles Unix socket connection and auto-starting the server.
 
-#![allow(unsafe_code)] // getuid() call
-
 use crate::has_systemd_run;
 use crate::protocol::{Request, Response};
 use std::path::{Path, PathBuf};
@@ -53,7 +51,7 @@ pub enum ClientError {
 /// variables differ across contexts (e.g., cron, hooks, direct shell).
 #[must_use]
 pub fn default_socket_path() -> PathBuf {
-    let uid = unsafe { libc::getuid() };
+    let uid = crate::sys::getuid();
     let runtime_dir = PathBuf::from(format!("/run/user/{uid}"));
     if runtime_dir.is_dir() {
         runtime_dir.join("botty.sock")

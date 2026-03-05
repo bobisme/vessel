@@ -32,7 +32,6 @@ use crate::pty;
 use nix::sys::signal::Signal;
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
-use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -691,9 +690,7 @@ async fn handle_request(
 
                 // Write to PTY master
                 let fd = agent.pty.master_fd();
-                // SAFETY: The fd is valid for the lifetime of the agent
-                #[allow(unsafe_code)]
-                let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+                let borrowed_fd = crate::sys::borrow_fd(fd);
                 match nix::unistd::write(borrowed_fd, &bytes)
                 {
                     Ok(_) => Response::Ok,
@@ -711,9 +708,7 @@ async fn handle_request(
                 agent.record_command("send_bytes", hex::encode(&data));
 
                 let fd = agent.pty.master_fd();
-                // SAFETY: The fd is valid for the lifetime of the agent
-                #[allow(unsafe_code)]
-                let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+                let borrowed_fd = crate::sys::borrow_fd(fd);
                 match nix::unistd::write(borrowed_fd, &data)
                 {
                     Ok(_) => Response::Ok,
@@ -1120,9 +1115,7 @@ async fn run_attach_bridge(
                         let mgr = manager.lock().await;
                         if let Some(agent) = mgr.get(agent_id) {
                             let pty_fd = agent.pty.master_fd();
-                            // SAFETY: fd is valid because we hold the lock and agent exists
-                            #[allow(unsafe_code)]
-                            let borrowed_fd = unsafe { BorrowedFd::borrow_raw(pty_fd) };
+                            let borrowed_fd = crate::sys::borrow_fd(pty_fd);
                             if let Err(e) = nix::unistd::write(borrowed_fd, &input_buf[..n]) {
                                 warn!("Failed to write to PTY: {e}");
                                 return Ok(AttachEndReason::Error {
@@ -1160,9 +1153,7 @@ async fn run_attach_bridge(
 
                     // Read from PTY - fd is valid because we hold lock
                     let pty_fd = agent.pty.master_fd();
-                    // SAFETY: fd is valid because we hold the lock and agent exists
-                    #[allow(unsafe_code)]
-                    let borrowed_fd = unsafe { BorrowedFd::borrow_raw(pty_fd) };
+                    let borrowed_fd = crate::sys::borrow_fd(pty_fd);
                     match nix::unistd::read(borrowed_fd, &mut output_buf) {
                         Ok(n) if n > 0 => {
                             let data = &output_buf[..n];
@@ -1236,9 +1227,7 @@ async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast:
                 let fd = agent.pty.master_fd();
                 let mut buf = [0u8; 4096];
 
-                // SAFETY: The fd is valid for the lifetime of the agent
-                #[allow(unsafe_code)]
-                let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+                let borrowed_fd = crate::sys::borrow_fd(fd);
                 
                 // Non-blocking read
                 match nix::unistd::read(borrowed_fd, &mut buf) {
@@ -1331,7 +1320,7 @@ fn read_proc_environ(pid: u32) -> Result<Vec<(String, String)>, std::io::Error> 
 fn get_process_tree_rss(pid: u32) -> Option<u64> {
     let mut total_rss: u64 = 0;
     let mut stack = vec![pid];
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as u64;
+    let page_size = crate::sys::page_size();
 
     while let Some(p) = stack.pop() {
         // Read RSS from /proc/<pid>/stat (field 24, 0-indexed 23)

@@ -2862,9 +2862,7 @@ async fn run_resize_panes_command(
     for (agent_id, (_, _)) in &pane_sizes {
         if let Some(&pid) = agent_pids.get(agent_id) {
             // Send SIGWINCH (28) to the process
-            unsafe {
-                libc::kill(pid as libc::pid_t, libc::SIGWINCH);
-            }
+            let _ = botty::sys::kill(pid as i32, libc::SIGWINCH);
             tracing::debug!("Sent SIGWINCH to {} (pid {})", agent_id, pid);
         }
     }

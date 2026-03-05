@@ -2,7 +2,6 @@
 //!
 //! Handles interactive terminal bridging between user TTY and agent PTY.
 
-#![allow(unsafe_code)] // Terminal manipulation requires unsafe
 
 use crate::protocol::{AttachEndReason, Request, Response};
 use std::os::fd::{AsFd, OwnedFd};
@@ -303,18 +302,7 @@ pub async fn run_attach(
 
 /// Get terminal size from stdout
 fn get_terminal_size() -> Option<(u16, u16)> {
-    use nix::libc::{TIOCGWINSZ, winsize};
-    use std::os::unix::io::AsRawFd;
-    
-    let fd = std::io::stdout().as_raw_fd();
-    let mut ws: winsize = unsafe { std::mem::zeroed() };
-    
-    let result = unsafe { nix::libc::ioctl(fd, TIOCGWINSZ, &mut ws) };
-    if result == 0 && ws.ws_row > 0 && ws.ws_col > 0 {
-        Some((ws.ws_row, ws.ws_col))
-    } else {
-        None
-    }
+    crate::sys::terminal_size()
 }
 
 /// Run the bidirectional I/O bridge.

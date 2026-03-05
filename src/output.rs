@@ -86,6 +86,7 @@ pub fn text_record(fields: &[&str]) -> String {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)] // set_var/remove_var require unsafe in edition 2024
 mod tests {
     use super::*;
 
