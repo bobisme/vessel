@@ -223,34 +223,36 @@ pub fn spawn_with_env(
             })
         }
         ForkResult::Child => {
-            // Child: set up the terminal and exec
+            // Child: set up the terminal and exec.
+            //
+            // CRITICAL: After fork(), the child must NEVER return from this
+            // function. If any step fails, it must _exit() immediately.
+            // Returning would let the child continue executing the parent's
+            // code (e.g., test runner logic), causing hangs and zombies.
 
             // Close master in child
             drop(master);
 
             // Create a new session
-            setsid().map_err(PtyError::Setsid)?;
+            if setsid().is_err() {
+                unsafe { libc::_exit(1) };
+            }
 
             // Set the slave as the controlling terminal
             unsafe {
-                let ret = libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0);
-                if ret < 0 {
-                    std::process::exit(1);
+                if libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0) < 0 {
+                    libc::_exit(1);
                 }
             }
 
-            // Redirect stdin/stdout/stderr to the slave using libc directly
-            // (nix's dup2 API is awkward for this use case)
+            // Redirect stdin/stdout/stderr to the slave
             let slave_fd = slave.as_raw_fd();
             unsafe {
-                if libc::dup2(slave_fd, libc::STDIN_FILENO) < 0 {
-                    std::process::exit(1);
-                }
-                if libc::dup2(slave_fd, libc::STDOUT_FILENO) < 0 {
-                    std::process::exit(1);
-                }
-                if libc::dup2(slave_fd, libc::STDERR_FILENO) < 0 {
-                    std::process::exit(1);
+                if libc::dup2(slave_fd, libc::STDIN_FILENO) < 0
+                    || libc::dup2(slave_fd, libc::STDOUT_FILENO) < 0
+                    || libc::dup2(slave_fd, libc::STDERR_FILENO) < 0
+                {
+                    libc::_exit(1);
                 }
             }
 
@@ -266,11 +268,9 @@ pub fn spawn_with_env(
                 for (key, _) in std::env::vars() {
                     std::env::remove_var(&key);
                 }
-                // Set essential vars (PATH, HOME, USER, TERM, SHELL, LANG)
                 for (key, value) in &essential {
                     std::env::set_var(key, value);
                 }
-                // Set explicit vars (override essentials if overlapping)
                 for (key, value) in &env.vars {
                     std::env::set_var(key, value);
                 }
@@ -278,22 +278,27 @@ pub fn spawn_with_env(
 
             // Change working directory if requested
             if let Some(dir) = cwd {
-                std::env::set_current_dir(dir).map_err(PtyError::Chdir)?;
+                if std::env::set_current_dir(dir).is_err() {
+                    unsafe { libc::_exit(1) };
+                }
             }
 
-            // Convert command to CStrings
-            let prog = CString::new(cmd[0].as_str()).map_err(PtyError::InvalidCommand)?;
-            let args: Vec<CString> = cmd
+            // Convert command to CStrings — _exit on failure
+            let Ok(prog) = CString::new(cmd[0].as_str()) else {
+                unsafe { libc::_exit(1) };
+            };
+            let args: Vec<CString> = match cmd
                 .iter()
                 .map(|s| CString::new(s.as_str()))
                 .collect::<Result<_, _>>()
-                .map_err(PtyError::InvalidCommand)?;
+            {
+                Ok(args) => args,
+                Err(_) => unsafe { libc::_exit(1) },
+            };
 
-            // Exec the command
-            execvp(&prog, &args).map_err(PtyError::Exec)?;
-
-            // execvp only returns on error
-            unreachable!()
+            // Exec the command — only returns on error
+            let _: Result<std::convert::Infallible, _> = execvp(&prog, &args);
+            unsafe { libc::_exit(127) };
         }
     }
 }
