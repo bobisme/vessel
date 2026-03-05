@@ -36,10 +36,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, Mutex};
+use crate::runtime::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use crate::runtime::net::{OwnedReadHalf, OwnedWriteHalf, UnixListener, UnixStream};
+use crate::runtime::sync::{broadcast, Mutex};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Errors that can occur in the server.
@@ -136,8 +135,8 @@ impl Server {
         let manager = Arc::clone(&self.manager);
         let event_tx = self.event_tx.clone();
         let mut pty_shutdown = self.shutdown_tx.subscribe();
-        tokio::spawn(async move {
-            tokio::select! {
+        crate::runtime::task::spawn(async move {
+            crate::runtime::select! {
                 () = pty_reader_task(manager, event_tx) => {}
                 _ = pty_shutdown.recv() => {}
             }
@@ -147,18 +146,18 @@ impl Server {
 
         // Set up OS signal handlers so the server shuts down gracefully
         // instead of dying instantly (which orphans/kills all agents).
-        let mut sigterm = tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::terminate(),
-        ).map_err(|e| ServerError::Io(e))?;
-        let mut sigint = tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::interrupt(),
-        ).map_err(|e| ServerError::Io(e))?;
-        let mut sighup = tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::hangup(),
-        ).map_err(|e| ServerError::Io(e))?;
+        let mut sigterm = crate::runtime::signal::signal(
+            crate::runtime::signal::SignalKind::terminate(),
+        ).map_err(ServerError::Io)?;
+        let mut sigint = crate::runtime::signal::signal(
+            crate::runtime::signal::SignalKind::interrupt(),
+        ).map_err(ServerError::Io)?;
+        let mut sighup = crate::runtime::signal::signal(
+            crate::runtime::signal::SignalKind::hangup(),
+        ).map_err(ServerError::Io)?;
 
         loop {
-            tokio::select! {
+            crate::runtime::select! {
                 result = listener.accept() => {
                     match result {
                         Ok((stream, _addr)) => {
@@ -166,7 +165,7 @@ impl Server {
                             let manager = Arc::clone(&self.manager);
                             let shutdown_tx = self.shutdown_tx.clone();
                             let event_tx = self.event_tx.clone();
-                            tokio::spawn(async move {
+                            crate::runtime::task::spawn(async move {
                                 if let Err(e) = handle_connection(stream, manager, shutdown_tx, event_tx).await {
                                     error!("Connection error: {}", e);
                                 }
@@ -240,9 +239,9 @@ impl Server {
                 drop(mgr);
 
                 // Wait up to 5 seconds for agents to exit
-                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                let deadline = crate::runtime::time::Instant::now() + Duration::from_secs(5);
                 loop {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    crate::runtime::time::sleep(Duration::from_millis(100)).await;
                     let mgr = self.manager.lock().await;
                     let still_running = running.iter()
                         .filter(|id| mgr.get(id).map_or(false, |a| a.is_running()))
@@ -253,7 +252,7 @@ impl Server {
                         info!("All agents exited gracefully");
                         break;
                     }
-                    if tokio::time::Instant::now() >= deadline {
+                    if crate::runtime::time::Instant::now() >= deadline {
                         warn!("{} agent(s) did not exit in time, sending SIGKILL", still_running);
                         let mgr = self.manager.lock().await;
                         for id in &running {
@@ -1098,10 +1097,10 @@ async fn run_attach_bridge(
     let mut output_buf = [0u8; 4096];
 
     // Create a ticker for polling the PTY
-    let mut poll_interval = tokio::time::interval(Duration::from_millis(10));
+    let mut poll_interval = crate::runtime::time::interval(Duration::from_millis(10));
 
     loop {
-        tokio::select! {
+        crate::runtime::select! {
             // Read input from client (always read to prevent buffer deadlock,
             // but only forward to PTY in read-write mode)
             result = reader.read(&mut input_buf) => {
@@ -1194,7 +1193,7 @@ async fn run_attach_bridge(
 
 /// Background task that reads from PTY masters and updates transcripts/screens.
 async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast::Sender<Event>) {
-    use tokio::time::{interval, Duration};
+    use crate::runtime::time::{interval, Duration};
 
     let mut poll_interval = interval(Duration::from_millis(10));
 

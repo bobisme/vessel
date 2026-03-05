@@ -33,12 +33,12 @@ pub mod sync {
 
 #[cfg(feature = "runtime-tokio")]
 pub mod time {
-    pub use tokio::time::{Duration, interval, sleep, timeout};
+    pub use tokio::time::{Duration, Instant, interval, sleep, timeout};
 }
 
 #[cfg(feature = "runtime-tokio")]
 pub mod signal {
-    pub use tokio::signal::unix::{SignalKind, signal};
+    pub use tokio::signal::unix::{Signal, SignalKind, signal};
 }
 
 #[cfg(feature = "runtime-tokio")]
@@ -61,7 +61,9 @@ pub(crate) use select;
 #[cfg(feature = "runtime-asupersync")]
 pub mod net {
     pub use asupersync::net::{UnixListener, UnixStream};
-    pub use asupersync::net::{UnixOwnedReadHalf as OwnedReadHalf, UnixOwnedWriteHalf as OwnedWriteHalf};
+    pub use asupersync::net::{
+        UnixOwnedReadHalf as OwnedReadHalf, UnixOwnedWriteHalf as OwnedWriteHalf,
+    };
 }
 
 #[cfg(feature = "runtime-asupersync")]
@@ -80,7 +82,6 @@ pub mod sync {
 pub mod time {
     pub use std::time::Duration;
     // TODO: sleep, timeout, interval wrappers around asupersync::time
-    //       These need wall_now() prepended and Cx for some operations.
 }
 
 #[cfg(feature = "runtime-asupersync")]
