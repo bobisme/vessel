@@ -1,4 +1,4 @@
-//! Client for communicating with the botty server.
+//! Client for communicating with the vessel server.
 //!
 //! Handles Unix socket connection and auto-starting the server.
 
@@ -43,10 +43,10 @@ pub enum ClientError {
     ConnectionLost,
 }
 
-/// Get the default socket path for the botty server.
+/// Get the default socket path for the vessel server.
 ///
-/// Uses `/run/user/$UID/botty.sock` if the directory exists (regardless of
-/// whether `XDG_RUNTIME_DIR` is set), falling back to `/tmp/botty-$UID.sock`.
+/// Uses `/run/user/$UID/vessel.sock` if the directory exists (regardless of
+/// whether `XDG_RUNTIME_DIR` is set), falling back to `/tmp/vessel-$UID.sock`.
 /// This ensures all clients resolve to the same path even when environment
 /// variables differ across contexts (e.g., cron, hooks, direct shell).
 #[must_use]
@@ -54,13 +54,13 @@ pub fn default_socket_path() -> PathBuf {
     let uid = crate::sys::getuid();
     let runtime_dir = PathBuf::from(format!("/run/user/{uid}"));
     if runtime_dir.is_dir() {
-        runtime_dir.join("botty.sock")
+        runtime_dir.join("vessel.sock")
     } else {
-        PathBuf::from(format!("/tmp/botty-{uid}.sock"))
+        PathBuf::from(format!("/tmp/vessel-{uid}.sock"))
     }
 }
 
-/// Client for the botty server.
+/// Client for the vessel server.
 pub struct Client {
     socket_path: PathBuf,
     stream: Option<BufReader<UnixStream>>,
@@ -138,7 +138,7 @@ impl Client {
         if has_systemd_run() {
             info!("Launching server via systemd-run --scope");
             let result = Command::new("systemd-run")
-                .args(["--user", "--scope", "--collect", "--unit=botty-server", "--"])
+                .args(["--user", "--scope", "--collect", "--unit=vessel-server", "--"])
                 .arg(&exe)
                 .args(["server", "--daemon"])
                 .spawn();

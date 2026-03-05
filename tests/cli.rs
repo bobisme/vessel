@@ -1,6 +1,6 @@
 //! End-to-end CLI tests using assert_cmd.
 //!
-//! These tests run the actual botty binary and verify stdout/stderr/exit codes.
+//! These tests run the actual vessel binary and verify stdout/stderr/exit codes.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -14,7 +14,7 @@ static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 fn unique_socket_path() -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let pid = std::process::id();
-    PathBuf::from(format!("/tmp/botty-cli-test-{pid}-{id}.sock"))
+    PathBuf::from(format!("/tmp/vessel-cli-test-{pid}-{id}.sock"))
 }
 
 /// Helper to clean up socket after test.
@@ -37,7 +37,7 @@ impl TestEnv {
     }
 
     fn start_server(&mut self) {
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_botty"))
+        let child = std::process::Command::new(env!("CARGO_BIN_EXE_vessel"))
             .arg(&self.socket_arg())
             .arg("server")
             .spawn()
@@ -47,8 +47,8 @@ impl TestEnv {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    fn botty(&self) -> Command {
-        let mut cmd = Command::cargo_bin("botty").unwrap();
+    fn vessel(&self) -> Command {
+        let mut cmd = Command::cargo_bin("vessel").unwrap();
         cmd.arg(&self.socket_arg());
         cmd
     }
@@ -58,7 +58,7 @@ impl Drop for TestEnv {
     fn drop(&mut self) {
         // Try to shut down the server gracefully
         if self.server_process.is_some() {
-            let _ = std::process::Command::new(env!("CARGO_BIN_EXE_botty"))
+            let _ = std::process::Command::new(env!("CARGO_BIN_EXE_vessel"))
                 .arg(&self.socket_arg())
                 .arg("shutdown")
                 .output();
@@ -77,7 +77,7 @@ impl Drop for TestEnv {
 
 #[test]
 fn test_help() {
-    Command::cargo_bin("botty")
+    Command::cargo_bin("vessel")
         .unwrap()
         .arg("--help")
         .assert()
@@ -90,17 +90,17 @@ fn test_help() {
 
 #[test]
 fn test_version() {
-    Command::cargo_bin("botty")
+    Command::cargo_bin("vessel")
         .unwrap()
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("botty"));
+        .stdout(predicate::str::contains("vessel"));
 }
 
 #[test]
 fn test_spawn_help() {
-    Command::cargo_bin("botty")
+    Command::cargo_bin("vessel")
         .unwrap()
         .args(["spawn", "--help"])
         .assert()
@@ -117,7 +117,7 @@ fn test_spawn_list_kill_workflow() {
 
     // Spawn an agent
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "sleep", "30"])
         .output()
         .expect("failed to run spawn");
@@ -127,7 +127,7 @@ fn test_spawn_list_kill_workflow() {
     assert!(!agent_id.is_empty(), "should return agent ID");
 
     // List agents
-    env.botty()
+    env.vessel()
         .arg("list")
         .assert()
         .success()
@@ -136,7 +136,7 @@ fn test_spawn_list_kill_workflow() {
         .stdout(predicate::str::contains("running"));
 
     // Kill the agent
-    env.botty()
+    env.vessel()
         .args(["kill", &agent_id])
         .assert()
         .success()
@@ -144,7 +144,7 @@ fn test_spawn_list_kill_workflow() {
 
     // List should show exited (need --all to see exited agents)
     std::thread::sleep(Duration::from_millis(200));
-    env.botty()
+    env.vessel()
         .args(["list", "--all"])
         .assert()
         .success()
@@ -158,7 +158,7 @@ fn test_send_and_snapshot() {
 
     // Spawn bash
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "bash"])
         .output()
         .expect("failed to run spawn");
@@ -169,7 +169,7 @@ fn test_send_and_snapshot() {
     std::thread::sleep(Duration::from_millis(200));
 
     // Send a command
-    env.botty()
+    env.vessel()
         .args(["send", &agent_id, "echo UNIQUE_TEST_STRING_12345", "--newline"])
         .assert()
         .success();
@@ -177,14 +177,14 @@ fn test_send_and_snapshot() {
     std::thread::sleep(Duration::from_millis(300));
 
     // Snapshot should contain our output
-    env.botty()
+    env.vessel()
         .args(["snapshot", &agent_id])
         .assert()
         .success()
         .stdout(predicate::str::contains("UNIQUE_TEST_STRING_12345"));
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn test_tail() {
 
     // Spawn something that produces output
     let output = env
-        .botty()
+        .vessel()
         .args([
             "spawn",
             "--",
@@ -211,7 +211,7 @@ fn test_tail() {
     std::thread::sleep(Duration::from_millis(300));
 
     // Tail should show the output
-    env.botty()
+    env.vessel()
         .args(["tail", &agent_id])
         .assert()
         .success()
@@ -219,7 +219,7 @@ fn test_tail() {
         .stdout(predicate::str::contains("SECOND_LINE"));
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn test_agent_not_found() {
     env.start_server();
 
     // Try to snapshot a non-existent agent
-    env.botty()
+    env.vessel()
         .args(["snapshot", "nonexistent-agent"])
         .assert()
         .failure()
@@ -237,7 +237,7 @@ fn test_agent_not_found() {
 
 #[test]
 fn test_spawn_requires_command() {
-    Command::cargo_bin("botty")
+    Command::cargo_bin("vessel")
         .unwrap()
         .args(["spawn", "--"])
         .assert()
@@ -251,7 +251,7 @@ fn test_send_bytes_hex() {
 
     // Spawn bash
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "bash"])
         .output()
         .expect("failed to run spawn");
@@ -262,13 +262,13 @@ fn test_send_bytes_hex() {
     std::thread::sleep(Duration::from_millis(200));
 
     // Send "hi\n" as hex (68 69 0a)
-    env.botty()
+    env.vessel()
         .args(["send-bytes", &agent_id, "68690a"])
         .assert()
         .success();
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn test_shutdown() {
     env.start_server();
 
     // Shutdown should succeed
-    env.botty()
+    env.vessel()
         .arg("shutdown")
         .assert()
         .success()
@@ -294,7 +294,7 @@ fn test_wait_for_content() {
 
     // Spawn a program that outputs text after a delay
     let output = env
-        .botty()
+        .vessel()
         .args([
             "spawn",
             "--",
@@ -309,7 +309,7 @@ fn test_wait_for_content() {
     let agent_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // Wait should succeed when the content appears
-    env.botty()
+    env.vessel()
         .args([
             "wait",
             &agent_id,
@@ -324,7 +324,7 @@ fn test_wait_for_content() {
         .stdout(predicate::str::contains("MARKER_READY"));
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn test_wait_timeout() {
 
     // Spawn a program that never outputs the expected content
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "sleep", "30"])
         .output()
         .expect("failed to run spawn");
@@ -343,7 +343,7 @@ fn test_wait_timeout() {
     let agent_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // Wait should fail after timeout
-    env.botty()
+    env.vessel()
         .args([
             "wait",
             &agent_id,
@@ -357,7 +357,7 @@ fn test_wait_timeout() {
         .stderr(predicate::str::contains("timeout"));
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -367,7 +367,7 @@ fn test_spawn_with_custom_name() {
 
     // Spawn with custom name
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "my-worker", "--", "sleep", "30"])
         .output()
         .expect("failed to run spawn");
@@ -377,14 +377,14 @@ fn test_spawn_with_custom_name() {
     assert_eq!(agent_id, "my-worker", "should return the custom name");
 
     // List should show the custom name
-    env.botty()
+    env.vessel()
         .arg("list")
         .assert()
         .success()
         .stdout(predicate::str::contains("my-worker"));
 
     // Clean up
-    env.botty().args(["kill", "my-worker"]).assert().success();
+    env.vessel().args(["kill", "my-worker"]).assert().success();
 }
 
 #[test]
@@ -394,7 +394,7 @@ fn test_spawn_duplicate_name_fails() {
 
     // Spawn first agent with custom name
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "unique-name", "--", "sleep", "30"])
         .output()
         .expect("failed to run spawn");
@@ -402,14 +402,14 @@ fn test_spawn_duplicate_name_fails() {
     assert!(output.status.success(), "first spawn should succeed");
 
     // Try to spawn second agent with same name - should fail
-    env.botty()
+    env.vessel()
         .args(["spawn", "--name", "unique-name", "--", "sleep", "30"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("already in use"));
 
     // Clean up
-    env.botty().args(["kill", "unique-name"]).assert().success();
+    env.vessel().args(["kill", "unique-name"]).assert().success();
 }
 
 #[test]
@@ -418,7 +418,7 @@ fn test_exec_command() {
     env.start_server();
 
     // Execute a simple command
-    env.botty()
+    env.vessel()
         .args(["exec", "--timeout", "5", "--", "echo", "EXEC_TEST_OUTPUT"])
         .assert()
         .success()
@@ -431,7 +431,7 @@ fn test_exec_multiline_output() {
     env.start_server();
 
     // Execute a command with multiple lines of output
-    env.botty()
+    env.vessel()
         .args([
             "exec",
             "--timeout",
@@ -452,14 +452,14 @@ fn test_exec_exit_code_propagation() {
     env.start_server();
 
     // Execute a failing command - should propagate exit code
-    env.botty()
+    env.vessel()
         .args(["exec", "--timeout", "5", "--", "false"])
         .assert()
         .failure()
         .code(1);
 
     // Execute a command that fails with code 2
-    env.botty()
+    env.vessel()
         .args(["exec", "--timeout", "5", "--", "ls /nonexistent_path_12345"])
         .assert()
         .failure()
@@ -472,20 +472,20 @@ fn test_kill_idempotent() {
     env.start_server();
 
     // Killing a non-existent agent should succeed (like rm -f, pkill)
-    env.botty()
+    env.vessel()
         .args(["kill", "nonexistent-agent"])
         .assert()
         .success();
 
     // Kill --all with no agents should also succeed
-    env.botty()
+    env.vessel()
         .args(["kill", "--all"])
         .assert()
         .success();
 
     // Spawn an agent, kill it, then kill it again (should be idempotent)
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "sleep", "100"])
         .output()
         .expect("failed to run spawn");
@@ -493,13 +493,13 @@ fn test_kill_idempotent() {
     let agent_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     // First kill succeeds
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 
     // Give it time to exit
     std::thread::sleep(Duration::from_millis(100));
 
     // Second kill should also succeed (idempotent)
-    env.botty()
+    env.vessel()
         .args(["kill", &agent_id])
         .assert()
         .success();
@@ -512,7 +512,7 @@ fn test_send_key() {
 
     // Spawn bash
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "bash"])
         .output()
         .expect("failed to run spawn");
@@ -522,46 +522,46 @@ fn test_send_key() {
     std::thread::sleep(Duration::from_millis(200));
 
     // Send single keys - should all succeed
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "up"])
         .assert()
         .success();
 
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "down"])
         .assert()
         .success();
 
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "enter"])
         .assert()
         .success();
 
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "tab"])
         .assert()
         .success();
 
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "ctrl-c"])
         .assert()
         .success();
 
     // Send multiple keys at once
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "up", "down", "enter"])
         .assert()
         .success();
 
     // Invalid key name should fail
-    env.botty()
+    env.vessel()
         .args(["send-keys", &agent_id, "invalid-key"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("unknown key"));
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -571,7 +571,7 @@ fn test_wait_combined_conditions() {
 
     // Spawn bash
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--", "bash"])
         .output()
         .expect("failed to run spawn");
@@ -581,30 +581,30 @@ fn test_wait_combined_conditions() {
     std::thread::sleep(Duration::from_millis(300));
 
     // Test 1: Wait with --stable alone should work
-    env.botty()
+    env.vessel()
         .args(["wait", &agent_id, "--stable", "100", "--timeout", "5"])
         .assert()
         .success();
 
     // Test 2: Send some output and wait for it with --contains alone
-    env.botty()
+    env.vessel()
         .args(["send", &agent_id, "echo test123", "--newline"])
         .assert()
         .success();
 
-    env.botty()
+    env.vessel()
         .args(["wait", &agent_id, "--contains", "test123", "--timeout", "5"])
         .assert()
         .success();
 
     // Test 3: Combined --stable AND --contains
     // Send a command and wait for both stable screen AND specific content
-    env.botty()
+    env.vessel()
         .args(["send", &agent_id, "echo hello-combined", "--newline"])
         .assert()
         .success();
 
-    env.botty()
+    env.vessel()
         .args([
             "wait",
             &agent_id,
@@ -619,7 +619,7 @@ fn test_wait_combined_conditions() {
         .success();
 
     // Clean up
-    env.botty().args(["kill", &agent_id]).assert().success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 // ============================================================================
@@ -633,14 +633,14 @@ fn test_wait_exited() {
 
     // Spawn a short-lived command that exits 0
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "exit-ok", "--", "sh", "-c", "echo hello; exit 0"])
         .output()
         .expect("failed to run spawn");
     assert!(output.status.success());
 
     // Wait for it to exit
-    env.botty()
+    env.vessel()
         .args(["wait", "--exited", "exit-ok", "--timeout", "10"])
         .assert()
         .success()
@@ -654,14 +654,14 @@ fn test_wait_exited_nonzero() {
 
     // Spawn a command that exits with code 42
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "exit-42", "--", "sh", "-c", "exit 42"])
         .output()
         .expect("failed to run spawn");
     assert!(output.status.success());
 
     // Wait for it to exit - should propagate exit code 42
-    env.botty()
+    env.vessel()
         .args(["wait", "--exited", "exit-42", "--timeout", "10"])
         .assert()
         .failure()
@@ -675,7 +675,7 @@ fn test_wait_exited_already_exited() {
 
     // Spawn a very short-lived command
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "already-done", "--", "true"])
         .output()
         .expect("failed to run spawn");
@@ -685,7 +685,7 @@ fn test_wait_exited_already_exited() {
     std::thread::sleep(Duration::from_millis(500));
 
     // wait --exited should return immediately since it already exited
-    env.botty()
+    env.vessel()
         .args(["wait", "--exited", "already-done", "--timeout", "5"])
         .assert()
         .success()
@@ -699,21 +699,21 @@ fn test_wait_exited_timeout() {
 
     // Spawn a long-running command
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "long-run", "--", "sleep", "999"])
         .output()
         .expect("failed to run spawn");
     assert!(output.status.success());
 
     // Wait with a very short timeout - should fail
-    env.botty()
+    env.vessel()
         .args(["wait", "--exited", "long-run", "--timeout", "1"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("timeout"));
 
     // Clean up
-    env.botty().args(["kill", "long-run"]).assert().success();
+    env.vessel().args(["kill", "long-run"]).assert().success();
 }
 
 // ============================================================================
@@ -727,7 +727,7 @@ fn test_spawn_slash_name() {
 
     // Spawn with a slash in the name
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "parent/child", "--", "sleep", "30"])
         .output()
         .expect("failed to run spawn");
@@ -737,14 +737,14 @@ fn test_spawn_slash_name() {
     assert_eq!(agent_id, "parent/child", "should return the slash name");
 
     // List should show the slash name
-    env.botty()
+    env.vessel()
         .arg("list")
         .assert()
         .success()
         .stdout(predicate::str::contains("parent/child"));
 
     // Kill by slash name should work
-    env.botty()
+    env.vessel()
         .args(["kill", "parent/child"])
         .assert()
         .success();
@@ -756,21 +756,21 @@ fn test_spawn_slash_name_invalid() {
     env.start_server();
 
     // Leading slash should be rejected
-    env.botty()
+    env.vessel()
         .args(["spawn", "--name", "/leading", "--", "sleep", "30"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("must not start/end with '/'"));
 
     // Trailing slash should be rejected
-    env.botty()
+    env.vessel()
         .args(["spawn", "--name", "trailing/", "--", "sleep", "30"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("must not start/end with '/'"));
 
     // Double slash should be rejected
-    env.botty()
+    env.vessel()
         .args(["spawn", "--name", "a//b", "--", "sleep", "30"])
         .assert()
         .failure()
@@ -784,7 +784,7 @@ fn test_spawn_multi_level_slash() {
 
     // Multi-level slash names should work
     let output = env
-        .botty()
+        .vessel()
         .args(["spawn", "--name", "a/b/c", "--", "sleep", "30"])
         .output()
         .expect("failed to run spawn");
@@ -795,11 +795,11 @@ fn test_spawn_multi_level_slash() {
 
     // Snapshot should work with slash names
     std::thread::sleep(Duration::from_millis(200));
-    env.botty()
+    env.vessel()
         .args(["snapshot", "a/b/c"])
         .assert()
         .success();
 
     // Clean up
-    env.botty().args(["kill", "a/b/c"]).assert().success();
+    env.vessel().args(["kill", "a/b/c"]).assert().success();
 }

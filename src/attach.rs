@@ -330,7 +330,7 @@ async fn run_io_bridge(
     loop {
         crate::runtime::select! {
             // Handle SIGWINCH (terminal resize)
-            // Skip in readonly mode - the view manages sizing via botty resize,
+            // Skip in readonly mode - the view manages sizing via vessel resize,
             // and sending resize requests from a readonly client can deadlock
             // if the server doesn't drain the client's input.
             _ = sigwinch.recv(), if !config.readonly => {

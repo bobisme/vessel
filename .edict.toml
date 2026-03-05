@@ -4,11 +4,11 @@ version = "1.0.13"
 push_main = true
 
 [project]
-name = "botty"
+name = "vessel"
 type = ["cli"]
 languages = []
-default_agent = "botty-dev"
-channel = "botty"
+default_agent = "vessel-dev"
+channel = "vessel"
 install_command = "maw exec default -- just install"
 
 # Companion tools to enable
@@ -17,7 +17,7 @@ bones = true
 maw = true
 crit = true
 botbus = true
-botty = true
+vessel = true
 
 # Code review configuration
 [review]

@@ -80,7 +80,7 @@ impl TestHarness {
     fn unique_socket_path() -> PathBuf {
         let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
         let pid = std::process::id();
-        PathBuf::from(format!("/tmp/botty-test-{pid}-{id}.sock"))
+        PathBuf::from(format!("/tmp/vessel-test-{pid}-{id}.sock"))
     }
 
     /// Spawn a new agent with the given command.

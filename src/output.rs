@@ -1,6 +1,6 @@
 //! Output format resolution and helpers.
 //!
-//! Provides consistent output formatting across all botty commands,
+//! Provides consistent output formatting across all vessel commands,
 //! with auto-detection of terminal capabilities.
 
 use serde_json::{json, Value};

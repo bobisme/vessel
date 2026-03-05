@@ -34,7 +34,7 @@ fuzz_target!(|req: FuzzRequest| {
     // Convert to real Request and serialize/deserialize
     let request = match req {
         FuzzRequest::Spawn { cmd, rows, cols } => {
-            botty::protocol::Request::Spawn {
+            vessel::protocol::Request::Spawn {
                 cmd,
                 rows,
                 cols,
@@ -48,7 +48,7 @@ fuzz_target!(|req: FuzzRequest| {
                 record: false,
             }
         }
-        FuzzRequest::Kill { id, signal } => botty::protocol::Request::Kill {
+        FuzzRequest::Kill { id, signal } => vessel::protocol::Request::Kill {
             id: Some(id),
             labels: vec![],
             all: false,
@@ -56,13 +56,13 @@ fuzz_target!(|req: FuzzRequest| {
             proc_filter: None,
         },
         FuzzRequest::Send { id, data, newline } => {
-            botty::protocol::Request::Send { id, data, newline }
+            vessel::protocol::Request::Send { id, data, newline }
         }
-        FuzzRequest::SendBytes { id, data } => botty::protocol::Request::SendBytes { id, data },
+        FuzzRequest::SendBytes { id, data } => vessel::protocol::Request::SendBytes { id, data },
     };
 
     // Roundtrip through JSON - should not panic
     if let Ok(json) = serde_json::to_string(&request) {
-        let _ = serde_json::from_str::<botty::protocol::Request>(&json);
+        let _ = serde_json::from_str::<vessel::protocol::Request>(&json);
     }
 });

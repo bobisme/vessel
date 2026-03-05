@@ -1,6 +1,6 @@
-//! botty — PTY-based Agent Runtime
+//! vessel — PTY-based Agent Runtime
 
-use botty::{default_socket_path, json_envelope, resolve_format, run_attach, text_record, AttachConfig, Cli, Client, Command, DumpFormat, OutputFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
+use vessel::{default_socket_path, json_envelope, resolve_format, run_attach, text_record, AttachConfig, Cli, Client, Command, DumpFormat, OutputFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
 use clap::Parser;
 use serde_json::json;
 use std::io::Write;
@@ -139,7 +139,7 @@ fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String 
 
     let mut script = String::new();
     writeln!(script, "#!/bin/bash").unwrap();
-    writeln!(script, "# Auto-generated test script from botty recording").unwrap();
+    writeln!(script, "# Auto-generated test script from vessel recording").unwrap();
     writeln!(script, "# Agent: {agent_id}").unwrap();
     writeln!(script, "# Generated: {now}").unwrap();
     writeln!(script, "# Commands: {}", commands.len()).unwrap();
@@ -147,10 +147,10 @@ fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String 
     writeln!(script).unwrap();
     writeln!(script, "# Spawn the agent").unwrap();
     writeln!(script, "# TODO: Replace with the actual command that was used to spawn the agent").unwrap();
-    writeln!(script, "AGENT=$(botty spawn --record -- echo 'replace with original command')").unwrap();
+    writeln!(script, "AGENT=$(vessel spawn --record -- echo 'replace with original command')").unwrap();
     writeln!(script).unwrap();
     writeln!(script, "# Cleanup on exit").unwrap();
-    writeln!(script, "cleanup() {{ botty kill \"$AGENT\" 2>/dev/null || true; }}").unwrap();
+    writeln!(script, "cleanup() {{ vessel kill \"$AGENT\" 2>/dev/null || true; }}").unwrap();
     writeln!(script, "trap cleanup EXIT").unwrap();
     writeln!(script).unwrap();
     writeln!(script, "# Wait for agent to be ready").unwrap();
@@ -178,20 +178,20 @@ fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String 
                 let escaped = shell_escape(text);
                 if use_newline {
                     writeln!(script, "# Command {}: send text (with newline)", i + 1).unwrap();
-                    writeln!(script, "botty send -n \"$AGENT\" {escaped}").unwrap();
+                    writeln!(script, "vessel send -n \"$AGENT\" {escaped}").unwrap();
                 } else {
                     writeln!(script, "# Command {}: send text", i + 1).unwrap();
-                    writeln!(script, "botty send \"$AGENT\" {escaped}").unwrap();
+                    writeln!(script, "vessel send \"$AGENT\" {escaped}").unwrap();
                 }
             }
             "send_bytes" => {
                 writeln!(script, "# Command {}: send raw bytes", i + 1).unwrap();
-                writeln!(script, "botty send-bytes \"$AGENT\" {}", cmd.payload).unwrap();
+                writeln!(script, "vessel send-bytes \"$AGENT\" {}", cmd.payload).unwrap();
             }
             "send_keys" => {
                 let escaped = shell_escape(&cmd.payload);
                 writeln!(script, "# Command {}: send key", i + 1).unwrap();
-                writeln!(script, "botty send-keys \"$AGENT\" {escaped}").unwrap();
+                writeln!(script, "vessel send-keys \"$AGENT\" {escaped}").unwrap();
             }
             other => {
                 writeln!(script, "# Command {}: unknown command type '{other}' — skipped", i + 1).unwrap();
@@ -218,7 +218,7 @@ fn main() {
         .build()
         .expect("failed to build asupersync runtime");
     let handle = rt.handle();
-    botty::runtime::task::set_runtime_handle(handle.clone());
+    vessel::runtime::task::set_runtime_handle(handle.clone());
     // Spawn main_inner as a task so it runs inside the scheduler with a Cx.
     // block_on alone doesn't set up CURRENT_CX, so Cx::current() would return None.
     let join = handle.spawn(main_inner());
@@ -230,7 +230,7 @@ async fn main_inner() {
 
     // Initialize telemetry (tracing + optional OTLP export).
     // The guard must be held until exit to flush pending spans.
-    let _telemetry = botty::telemetry::init(cli.verbose);
+    let _telemetry = vessel::telemetry::init(cli.verbose);
 
     let socket_path = cli.socket.unwrap_or_else(default_socket_path);
 
@@ -252,11 +252,11 @@ async fn run_server(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // When running as --daemon, escape into our own systemd scope so that
     // killing the originating pane/terminal doesn't take us down.
-    if daemon && !in_botty_scope() && botty::has_systemd_run() {
-        tracing::info!("Re-execing into botty-server.scope via systemd-run");
+    if daemon && !in_vessel_scope() && vessel::has_systemd_run() {
+        tracing::info!("Re-execing into vessel-server.scope via systemd-run");
         let exe = std::env::current_exe()?;
         let status = std::process::Command::new("systemd-run")
-            .args(["--user", "--scope", "--collect", "--unit=botty-server", "--"])
+            .args(["--user", "--scope", "--collect", "--unit=vessel-server", "--"])
             .arg(&exe)
             .args(["--socket", socket_path.to_str().unwrap_or_default()])
             .arg("server")
@@ -275,10 +275,10 @@ async fn run_server(
     Ok(())
 }
 
-/// Check if we're already running inside a botty-owned systemd scope.
-fn in_botty_scope() -> bool {
+/// Check if we're already running inside a vessel-owned systemd scope.
+fn in_vessel_scope() -> bool {
     std::fs::read_to_string("/proc/self/cgroup")
-        .map(|cg| cg.contains("botty-server.scope"))
+        .map(|cg| cg.contains("vessel-server.scope"))
         .unwrap_or(false)
 }
 
@@ -310,7 +310,7 @@ async fn run_doctor(
         let metadata = std::fs::metadata(&socket_path)?;
         if metadata.file_type().is_socket() {
             // Try to connect to see if daemon is running
-            match botty::runtime::net::UnixStream::connect(&socket_path).await {
+            match vessel::runtime::net::UnixStream::connect(&socket_path).await {
                 Ok(_) => println!("[OK] daemon responding"),
                 Err(_) => {
                     println!("[WARN] socket exists but daemon not responding (stale?)");
@@ -326,7 +326,7 @@ async fn run_doctor(
 
     // 3. Check PTY allocation
     print!("PTY allocation: ");
-    match botty::pty::spawn(&["true".to_string()], 24, 80) {
+    match vessel::pty::spawn(&["true".to_string()], 24, 80) {
         Ok(pty) => {
             // Wait for it to complete
             let _ = pty.wait();
@@ -477,9 +477,9 @@ async fn run_client(
                                 "agent",
                                 json!({"id": id, "pid": pid}),
                                 vec![
-                                    format!("botty send {id} \"<text>\""),
-                                    format!("botty attach {id}"),
-                                    format!("botty kill {id}"),
+                                    format!("vessel send {id} \"<text>\""),
+                                    format!("vessel attach {id}"),
+                                    format!("vessel kill {id}"),
                                 ],
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
@@ -487,7 +487,7 @@ async fn run_client(
                         OutputFormat::Pretty => {
                             // Human-friendly output with suggestions
                             println!("Spawned: {id} (pid {pid})");
-                            println!("Next: botty send {id} \"<text>\"");
+                            println!("Next: vessel send {id} \"<text>\"");
                         }
                     }
                     tracing::debug!("Spawned agent {id} (pid {pid})");
@@ -512,7 +512,7 @@ async fn run_client(
                     } else {
                         agents
                             .into_iter()
-                            .filter(|a| matches!(a.state, botty::AgentState::Running))
+                            .filter(|a| matches!(a.state, vessel::AgentState::Running))
                             .collect()
                     };
 
@@ -521,7 +521,7 @@ async fn run_client(
                     let output_format = resolve_format(format_flag);
 
                     // Build full JSON objects for JSON output
-                    let build_full_json = |agents: &[botty::AgentInfo]| -> Vec<serde_json::Value> {
+                    let build_full_json = |agents: &[vessel::AgentInfo]| -> Vec<serde_json::Value> {
                         agents
                             .iter()
                             .map(|a| {
@@ -529,8 +529,8 @@ async fn run_client(
                                     "id": a.id,
                                     "pid": a.pid,
                                     "state": match a.state {
-                                        botty::AgentState::Running => "running",
-                                        botty::AgentState::Exited => "exited",
+                                        vessel::AgentState::Running => "running",
+                                        vessel::AgentState::Exited => "exited",
                                     },
                                     "command": a.command.join(" "),
                                     "labels": a.labels,
@@ -539,9 +539,9 @@ async fn run_client(
                                 });
                                 if let Some(reason) = &a.exit_reason {
                                     obj["exit_reason"] = serde_json::json!(match reason {
-                                        botty::ExitReason::Normal => "normal",
-                                        botty::ExitReason::Timeout => "timeout",
-                                        botty::ExitReason::Killed => "killed",
+                                        vessel::ExitReason::Normal => "normal",
+                                        vessel::ExitReason::Timeout => "timeout",
+                                        vessel::ExitReason::Killed => "killed",
                                     });
                                 }
                                 if let Some(limits) = &a.limits {
@@ -565,12 +565,12 @@ async fn run_client(
                         OutputFormat::Json => {
                             let agents_json = serde_json::to_value(build_full_json(&agents))?;
                             let advice = if agents.is_empty() {
-                                vec!["botty spawn -- <command>".to_string()]
+                                vec!["vessel spawn -- <command>".to_string()]
                             } else {
                                 vec![
-                                    "botty kill <id>".to_string(),
-                                    "botty send <id> \"<text>\"".to_string(),
-                                    "botty snapshot <id>".to_string(),
+                                    "vessel kill <id>".to_string(),
+                                    "vessel send <id> \"<text>\"".to_string(),
+                                    "vessel snapshot <id>".to_string(),
                                 ]
                             };
                             let output = json_envelope("agents", agents_json, advice);
@@ -580,8 +580,8 @@ async fn run_client(
                             // ID-first compact text output with two-space delimiters
                             for a in &agents {
                                 let state = match a.state {
-                                    botty::AgentState::Running => "running",
-                                    botty::AgentState::Exited => "exited",
+                                    vessel::AgentState::Running => "running",
+                                    vessel::AgentState::Exited => "exited",
                                 };
                                 let cmd = a.command.join(" ");
                                 let labels_str = if a.labels.is_empty() {
@@ -616,8 +616,8 @@ async fn run_client(
                                 let mut total_rss: u64 = 0;
                                 for a in &agents {
                                     let state = match a.state {
-                                        botty::AgentState::Running => "running",
-                                        botty::AgentState::Exited => "exited",
+                                        vessel::AgentState::Running => "running",
+                                        vessel::AgentState::Exited => "exited",
                                     };
                                     let cmd = a.command.join(" ");
                                     let labels = if a.labels.is_empty() {
@@ -685,7 +685,7 @@ async fn run_client(
                             let envelope = json_envelope(
                                 "result",
                                 data,
-                                vec!["botty list".to_string()],
+                                vec!["vessel list".to_string()],
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
@@ -696,7 +696,7 @@ async fn run_client(
                             } else {
                                 println!("Signal sent");
                             }
-                            println!("Next: botty list");
+                            println!("Next: vessel list");
                         }
                     }
                 }
@@ -771,7 +771,7 @@ async fn run_client(
                             let envelope = json_envelope(
                                 "result",
                                 json!({"status": "ok"}),
-                                vec![format!("botty snapshot {id}")],
+                                vec![format!("vessel snapshot {id}")],
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
@@ -806,7 +806,7 @@ async fn run_client(
                             let envelope = json_envelope(
                                 "result",
                                 json!({"status": "ok"}),
-                                vec![format!("botty snapshot {id}")],
+                                vec![format!("vessel snapshot {id}")],
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
@@ -825,7 +825,7 @@ async fn run_client(
         }
 
         Command::SendKeys { id, keys, format, json } => {
-            use botty::parse_key_sequence;
+            use vessel::parse_key_sequence;
             for key in keys {
                 let data = parse_key_sequence(&key)
                     .ok_or_else(|| format!("unknown key: {key}"))?;
@@ -853,7 +853,7 @@ async fn run_client(
                     let envelope = json_envelope(
                         "result",
                         json!({"status": "ok"}),
-                        vec![format!("botty snapshot {id}")],
+                        vec![format!("vessel snapshot {id}")],
                     );
                     println!("{}", serde_json::to_string(&envelope)?);
                 }
@@ -965,7 +965,7 @@ async fn run_client(
                         }
                     }
 
-                    botty::runtime::time::sleep(poll_interval).await;
+                    vessel::runtime::time::sleep(poll_interval).await;
                 }
             } else {
                 // One-shot mode: just get current tail
@@ -1104,7 +1104,7 @@ async fn run_client(
                             let envelope = json_envelope(
                                 "recording",
                                 json!({"agent_id": agent_id, "commands": commands}),
-                                vec![format!("botty gen-test {id}")],
+                                vec![format!("vessel gen-test {id}")],
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
@@ -1235,10 +1235,10 @@ async fn run_client(
 
             if exited {
                 // Event-based approach: wait for agent(s) to exit
-                use botty::protocol::Event;
+                use vessel::protocol::Event;
                 use std::collections::HashMap;
-                use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                use botty::runtime::net::UnixStream;
+                use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                use vessel::runtime::net::UnixStream;
 
                 // First check current state - agents may have already exited
                 let response = client.request(Request::List { labels: vec![] }).await?;
@@ -1255,7 +1255,7 @@ async fn run_client(
                 for id in &ids {
                     let agent = agents.iter().find(|a| a.id == *id);
                     match agent {
-                        Some(a) if a.state == botty::AgentState::Exited => {
+                        Some(a) if a.state == vessel::AgentState::Exited => {
                             exit_codes.insert(id.clone(), a.exit_code);
                         }
                         Some(_) => {
@@ -1291,7 +1291,7 @@ async fn run_client(
                         let read_fut = reader.read_line(&mut line);
                         let result = if let Some(dl) = deadline {
                             let remaining = dl - Instant::now();
-                            match botty::runtime::time::timeout(remaining, read_fut).await {
+                            match vessel::runtime::time::timeout(remaining, read_fut).await {
                                 Ok(r) => r,
                                 Err(_) => {
                                     eprintln!("error: timeout waiting for agent(s) to exit");
@@ -1461,7 +1461,7 @@ async fn run_client(
                     }
 
                     last_snapshot = snapshot;
-                    botty::runtime::time::sleep(poll_interval).await;
+                    vessel::runtime::time::sleep(poll_interval).await;
                 }
             }
         }
@@ -1548,7 +1548,7 @@ async fn run_client(
                         std::process::exit(1);
                     }
 
-                    botty::runtime::time::sleep(poll_interval).await;
+                    vessel::runtime::time::sleep(poll_interval).await;
 
                     // Get new snapshot
                     let response = client
@@ -1618,9 +1618,9 @@ async fn run_client(
                 Response::Ok => {
                     println!("Server shutting down");
 
-                    // Kill tmux session (hardcoded to "botty" for now - see bd-1tr for unique names)
+                    // Kill tmux session (hardcoded to "vessel" for now - see bd-1tr for unique names)
                     let _ = std::process::Command::new("tmux")
-                        .args(["kill-session", "-t", "botty"])
+                        .args(["kill-session", "-t", "vessel"])
                         .status();
                 }
                 Response::Error { message } => {
@@ -1668,11 +1668,11 @@ async fn run_client(
             };
 
             // Give shell time to start
-            botty::runtime::time::sleep(Duration::from_millis(100)).await;
+            vessel::runtime::time::sleep(Duration::from_millis(100)).await;
 
             // Send the command with a unique marker for detecting completion
-            // The marker includes the exit code: __BOTTY_DONE_<pid>_<exitcode>__
-            let marker_prefix = format!("__BOTTY_DONE_{}_", std::process::id());
+            // The marker includes the exit code: __VESSEL_DONE_<pid>_<exitcode>__
+            let marker_prefix = format!("__VESSEL_DONE_{}_", std::process::id());
             let full_cmd = format!("{cmd_str}; echo {marker_prefix}$?__\n");
 
             let send_response = client
@@ -1736,7 +1736,7 @@ async fn run_client(
                 };
 
                 // Look for marker at the start of a line (not in command echo)
-                // Format: \n__BOTTY_DONE_<pid>_<exitcode>__
+                // Format: \n__VESSEL_DONE_<pid>_<exitcode>__
                 let marker_pattern = format!("\n{marker_prefix}");
                 if let Some(marker_start) = snapshot.find(&marker_pattern) {
                     // Extract output between the command echo and the marker
@@ -1781,7 +1781,7 @@ async fn run_client(
                     break;
                 }
 
-                botty::runtime::time::sleep(poll_interval).await;
+                vessel::runtime::time::sleep(poll_interval).await;
             }
 
             // Kill the agent
@@ -1811,8 +1811,8 @@ async fn run_attach_command(
     readonly: bool,
     detach_key: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::cli::parse_key_notation;
-    use botty::runtime::net::UnixStream;
+    use vessel::cli::parse_key_notation;
+    use vessel::runtime::net::UnixStream;
 
     // Parse detach key
     let detach_prefix = parse_key_notation(&detach_key)
@@ -1828,12 +1828,12 @@ async fn run_attach_command(
             {
                 // Start server in background
                 let socket_path_clone = socket_path.clone();
-                botty::runtime::task::spawn(async move {
+                vessel::runtime::task::spawn(async move {
                     let mut server = Server::new(socket_path_clone);
                     let _ = server.run().await;
                 });
                 // Give server time to start
-                botty::runtime::time::sleep(botty::runtime::time::Duration::from_millis(100)).await;
+                vessel::runtime::time::sleep(vessel::runtime::time::Duration::from_millis(100)).await;
                 UnixStream::connect(&socket_path).await?
             } else {
                 return Err(e.into());
@@ -1847,7 +1847,7 @@ async fn run_attach_command(
 
     match run_attach(&mut stream, &id, config).await {
         Ok(reason) => {
-            use botty::protocol::AttachEndReason;
+            use vessel::protocol::AttachEndReason;
             match reason {
                 AttachEndReason::Detached => {
                     eprintln!("\r\nDetached from {id}");
@@ -1877,8 +1877,8 @@ async fn run_events_command(
     filter: Vec<String>,
     include_output: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     // Connect to the server (don't auto-start - events are useless with no agents)
     let stream = UnixStream::connect(&socket_path).await?;
@@ -1932,9 +1932,9 @@ async fn run_subscribe_command(
     prefix: bool,
     format: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::protocol::Event;
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::protocol::Event;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     // Must specify at least one filter
     if ids.is_empty() && labels.is_empty() {
@@ -2075,9 +2075,9 @@ async fn run_view_command(
     labels: Vec<String>,
     new_session: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::ViewMode;
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::ViewMode;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     // Only tmux is supported for now
     if mux != "tmux" {
@@ -2091,10 +2091,10 @@ async fn run_view_command(
     TmuxView::check_tmux()?;
 
     // Get the path to our own binary
-    let botty_path = std::env::current_exe()
-        .map_or_else(|_| "botty".to_string(), |p| p.to_string_lossy().to_string());
+    let vessel_path = std::env::current_exe()
+        .map_or_else(|_| "vessel".to_string(), |p| p.to_string_lossy().to_string());
 
-    let mut view = TmuxView::with_mode(botty_path.clone(), view_mode);
+    let mut view = TmuxView::with_mode(vessel_path.clone(), view_mode);
 
     // Connect to server, auto-starting if necessary
     let stream = match UnixStream::connect(&socket_path).await {
@@ -2106,7 +2106,7 @@ async fn run_view_command(
                 ErrorKind::NotFound | ErrorKind::ConnectionRefused => {
                     // Server not running, start it
                     tracing::info!("Starting server...");
-                    std::process::Command::new(&botty_path)
+                    std::process::Command::new(&vessel_path)
                         .arg("server")
                         .arg("--daemon")
                         .spawn()?;
@@ -2115,7 +2115,7 @@ async fn run_view_command(
                     let mut connected = None;
                     let mut delay_ms = 50u64;
                     for _ in 0..20 {
-                        botty::runtime::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        vessel::runtime::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         if let Ok(s) = UnixStream::connect(&socket_path).await {
                             connected = Some(s);
                             break;
@@ -2145,10 +2145,10 @@ async fn run_view_command(
     let mut line = String::new();
     reader.read_line(&mut line).await?;
     
-    let current_agents: Vec<botty::AgentInfo> = match serde_json::from_str::<Response>(&line)? {
+    let current_agents: Vec<vessel::AgentInfo> = match serde_json::from_str::<Response>(&line)? {
         Response::Agents { agents } => agents
             .into_iter()
-            .filter(|a| a.state == botty::AgentState::Running)
+            .filter(|a| a.state == vessel::AgentState::Running)
             .collect(),
         Response::Error { message } => return Err(message.into()),
         _ => return Err("unexpected response to list".into()),
@@ -2157,7 +2157,7 @@ async fn run_view_command(
 
     if view.session_exists() && !new_session {
         // Reattach: session already exists, just reconcile panes
-        tracing::info!("Reattaching to existing botty session");
+        tracing::info!("Reattaching to existing vessel session");
 
         // Ensure remain-on-exit is set (may be missing if session was created by older version)
         view.ensure_remain_on_exit();
@@ -2213,7 +2213,7 @@ async fn run_view_command(
 
         // Resize agents to match their pane sizes
         if auto_resize && !current_agents.is_empty() {
-            botty::runtime::time::sleep(std::time::Duration::from_millis(300)).await;
+            vessel::runtime::time::sleep(std::time::Duration::from_millis(300)).await;
 
             if let Err(e) = resize_agents_to_panes(&socket_path, &view).await {
                 tracing::warn!("Failed to resize agents: {}", e);
@@ -2232,7 +2232,7 @@ async fn run_view_command(
     // Spawn a task to listen for events and manage panes
     let socket_path_clone = socket_path.clone();
     let existing_agents = current_agent_ids.clone();
-    let event_handle = botty::runtime::task::spawn(async move {
+    let event_handle = vessel::runtime::task::spawn(async move {
         if let Err(e) = run_view_event_loop(socket_path_clone, existing_agents, view_mode).await {
             tracing::warn!("Event loop error: {}", e);
         }
@@ -2240,7 +2240,7 @@ async fn run_view_command(
 
     // Attach to tmux (this blocks until user detaches or session ends)
     // Run in spawn_blocking so we don't block the async runtime
-    let attach_result = botty::runtime::task::spawn_blocking(move || view.attach()).await?;
+    let attach_result = vessel::runtime::task::spawn_blocking(move || view.attach()).await?;
 
     // Unbind Ctrl+P so it doesn't leak into other tmux sessions
     let _ = std::process::Command::new("tmux")
@@ -2261,7 +2261,7 @@ async fn run_view_command(
     if let Response::Agents { agents } = response {
         let running_count = agents
             .iter()
-            .filter(|a| matches!(a.state, botty::AgentState::Running))
+            .filter(|a| matches!(a.state, vessel::AgentState::Running))
             .count();
 
         if running_count == 0 {
@@ -2270,9 +2270,9 @@ async fn run_view_command(
             // Request server shutdown
             let _ = client.request(Request::Shutdown).await;
 
-            // Kill tmux session (hardcoded to "botty" for now - see bd-1tr for unique names)
+            // Kill tmux session (hardcoded to "vessel" for now - see bd-1tr for unique names)
             let _ = std::process::Command::new("tmux")
-                .args(["kill-session", "-t", "botty"])
+                .args(["kill-session", "-t", "vessel"])
                 .status();
         } else {
             tracing::debug!("Agents still running after detach - leaving server and session active");
@@ -2286,21 +2286,21 @@ async fn run_view_command(
 async fn run_view_event_loop(
     socket_path: std::path::PathBuf,
     existing_agents: Vec<String>,
-    mode: botty::ViewMode,
+    mode: vessel::ViewMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use botty::protocol::Event;
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::protocol::Event;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     let stream = UnixStream::connect(&socket_path).await?;
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
 
-    // Get botty path
-    let botty_path = std::env::current_exe()
-        .map_or_else(|_| "botty".to_string(), |p| p.to_string_lossy().to_string());
+    // Get vessel path
+    let vessel_path = std::env::current_exe()
+        .map_or_else(|_| "vessel".to_string(), |p| p.to_string_lossy().to_string());
 
-    let mut view = TmuxView::with_mode(botty_path, mode);
+    let mut view = TmuxView::with_mode(vessel_path, mode);
     
     // Initialize with existing agents so we track them properly
     for agent_id in existing_agents {
@@ -2393,11 +2393,11 @@ async fn wait_for_dependencies(
     after: &[String],
     wait_for: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::protocol::Event;
+    use vessel::protocol::Event;
     use regex::Regex;
     use std::collections::{HashMap, HashSet};
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     // Parse wait_for specs into (agent_id, optional_pattern)
     let mut pattern_waits: HashMap<String, Option<Regex>> = HashMap::new();
@@ -2435,7 +2435,7 @@ async fn wait_for_dependencies(
     let mut line = String::new();
     reader.read_line(&mut line).await?;
 
-    let agents: Vec<botty::AgentInfo> = match serde_json::from_str::<Response>(&line)? {
+    let agents: Vec<vessel::AgentInfo> = match serde_json::from_str::<Response>(&line)? {
         Response::Agents { agents } => agents,
         Response::Error { message } => return Err(message.into()),
         _ => return Err("unexpected response to list".into()),
@@ -2443,7 +2443,7 @@ async fn wait_for_dependencies(
 
     // Check for already-exited agents in --after list
     for agent in &agents {
-        if agent.state == botty::AgentState::Exited && waiting_for_exit.contains(&agent.id) {
+        if agent.state == vessel::AgentState::Exited && waiting_for_exit.contains(&agent.id) {
             tracing::debug!("Agent {} already exited", agent.id);
             waiting_for_exit.remove(&agent.id);
         }
@@ -2530,13 +2530,13 @@ async fn wait_for_dependencies(
 fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
     use std::process::Command;
     
-    let botty_path = view.botty_path();
-    let session_name = "botty";
+    let vessel_path = view.vessel_path();
+    let session_name = "vessel";
     let session_window = format!("{}:agents", session_name);
     
-    // Hook command: call botty resize-panes when any pane is resized
+    // Hook command: call vessel resize-panes when any pane is resized
     // The hook runs asynchronously (-b) so it won't block tmux
-    let hook_cmd = format!("{} resize-panes --mode={}", botty_path, mode);
+    let hook_cmd = format!("{} resize-panes --mode={}", vessel_path, mode);
     let run_shell = format!("run-shell -b '{}'", hook_cmd);
     
     // Session-level hook: after-resize-pane (fires when individual panes are resized)
@@ -2606,12 +2606,12 @@ fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
 /// (if other panes exist) or respawns it as a "waiting for agents" placeholder
 /// (if it's the last pane, to keep the session alive).
 ///
-/// Scoped to the botty session — does not affect other tmux sessions.
+/// Scoped to the vessel session — does not affect other tmux sessions.
 fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     use std::process::Command;
 
-    let session_name = "botty";
-    let botty_path = view.botty_path();
+    let session_name = "vessel";
+    let vessel_path = view.vessel_path();
 
     // Enable remain-on-exit so pane-died hook fires (instead of pane being
     // destroyed immediately, which would skip the hook entirely)
@@ -2624,7 +2624,7 @@ fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
 
     // pane-died hook: try to respawn the attach process if the agent is still running.
     //
-    // When a pane's `botty attach --readonly` process dies (e.g., server restart,
+    // When a pane's `vessel attach --readonly` process dies (e.g., server restart,
     // connection hiccup), the pane goes stale while the agent keeps running.
     // This hook auto-reconnects by respawning the attach command.
     //
@@ -2642,11 +2642,11 @@ fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     let hook_cmd = format!(
         "run-shell 'AID=\"#{{@agent_id}}\"; \
          if [ -n \"$AID\" ]; then \
-           tmux respawn-pane -k -t \"#{{pane_id}}\" \"{botty} attach --readonly \\\"$AID\\\" || sleep 2\"; \
+           tmux respawn-pane -k -t \"#{{pane_id}}\" \"{vessel} attach --readonly \\\"$AID\\\" || sleep 2\"; \
          elif [ \"#{{window_panes}}\" = \"1\" ]; then \
            tmux respawn-pane -k -t \"#{{pane_id}}\" \"printf \\\"\\033[2J\\033[H\\033[90mWaiting for agents...\\033[0m\\\"; sleep 3600\"; \
          fi'",
-        botty = botty_path
+        vessel = vessel_path
     );
 
     let _ = Command::new("tmux")
@@ -2659,44 +2659,44 @@ fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     Ok(())
 }
 
-/// Register botty commands as tmux command aliases and bind Ctrl+P.
+/// Register vessel commands as tmux command aliases and bind Ctrl+P.
 ///
-/// Creates aliases like `botty-menu`, `botty-list`, `botty-snapshot`, etc.
+/// Creates aliases like `vessel-menu`, `vessel-list`, `vessel-snapshot`, etc.
 /// that can be invoked from the tmux command prompt (prefix+:) in any session.
-/// Also binds Ctrl+P to `botty-menu`, scoped to the botty session via if-shell.
+/// Also binds Ctrl+P to `vessel-menu`, scoped to the vessel session via if-shell.
 fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
     use std::process::Command;
 
-    let botty_path = view.botty_path();
-    let session_name = "botty";
+    let vessel_path = view.vessel_path();
+    let session_name = "vessel";
 
     // Register tmux command aliases (server-level, available from any session)
     let list_alias = format!(
-        "botty-list=display-popup -h 75% -w 80% -E '{} list --format text | less -R'",
-        botty_path
+        "vessel-list=display-popup -h 75% -w 80% -E '{} list --format text | less -R'",
+        vessel_path
     );
     let snapshot_alias = format!(
-        "botty-snapshot=display-popup -h 75% -w 80% -E '{} snapshot --raw #{{@agent_id}} | less -R'",
-        botty_path
+        "vessel-snapshot=display-popup -h 75% -w 80% -E '{} snapshot --raw #{{@agent_id}} | less -R'",
+        vessel_path
     );
     let shutdown_alias = format!(
-        "botty-shutdown=display-popup -E '{} shutdown && tmux detach-client'",
-        botty_path
+        "vessel-shutdown=display-popup -E '{} shutdown && tmux detach-client'",
+        vessel_path
     );
 
     let aliases: &[(&str, &str)] = &[
-        ("command-alias[100]", "botty-menu=display-menu -T '#[align=centre]botty' \
-            'List Agents' l botty-list \
-            'Snapshot Pane' s botty-snapshot \
+        ("command-alias[100]", "vessel-menu=display-menu -T '#[align=centre]vessel' \
+            'List Agents' l vessel-list \
+            'Snapshot Pane' s vessel-snapshot \
             '' '' '' \
-            'Refresh Layout' r botty-refresh \
+            'Refresh Layout' r vessel-refresh \
             '' '' '' \
             'Detach' d detach-client \
-            'Shutdown' S botty-shutdown"),
+            'Shutdown' S vessel-shutdown"),
         ("command-alias[101]", &list_alias),
         ("command-alias[102]", &snapshot_alias),
         ("command-alias[103]", &shutdown_alias),
-        ("command-alias[104]", "botty-refresh=select-layout tiled"),
+        ("command-alias[104]", "vessel-refresh=select-layout tiled"),
     ];
 
     for (key, value) in aliases {
@@ -2705,12 +2705,12 @@ fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
             .status();
     }
 
-    // Bind Ctrl+P scoped to botty session: shows menu in botty, passes through elsewhere
+    // Bind Ctrl+P scoped to vessel session: shows menu in vessel, passes through elsewhere
     let _ = Command::new("tmux")
         .args([
             "bind-key", "-T", "root", "C-p",
-            "if-shell", "-F", "#{==:#{session_name},botty}",
-            "botty-menu",
+            "if-shell", "-F", "#{==:#{session_name},vessel}",
+            "vessel-menu",
             "send-keys C-p",
         ])
         .status();
@@ -2721,7 +2721,7 @@ fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
             "display-message",
             "-t", session_name,
             "-d", "3000",
-            "botty view — Ctrl+P for menu, or prefix+: then botty-<tab>",
+            "vessel view — Ctrl+P for menu, or prefix+: then vessel-<tab>",
         ])
         .status();
 
@@ -2733,8 +2733,8 @@ async fn resize_agents_to_panes(
     socket_path: &std::path::Path,
     view: &TmuxView,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     let pane_sizes = view.get_pane_sizes()?;
 
@@ -2802,18 +2802,18 @@ async fn run_resize_panes_command(
     socket_path: std::path::PathBuf,
     mode: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use botty::ViewMode;
-    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use botty::runtime::net::UnixStream;
+    use vessel::ViewMode;
+    use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use vessel::runtime::net::UnixStream;
 
     let view_mode = ViewMode::from_str(&mode)?;
     
     // Get path to our binary
-    let botty_path = std::env::current_exe()
-        .map_or_else(|_| "botty".to_string(), |p| p.to_string_lossy().to_string());
+    let vessel_path = std::env::current_exe()
+        .map_or_else(|_| "vessel".to_string(), |p| p.to_string_lossy().to_string());
 
     // Create a view instance to query pane sizes
-    let mut view = TmuxView::with_mode(botty_path.clone(), view_mode);
+    let mut view = TmuxView::with_mode(vessel_path.clone(), view_mode);
     
     // First, get the list of running agents to populate active_panes
     let stream = UnixStream::connect(&socket_path).await?;
@@ -2832,7 +2832,7 @@ async fn run_resize_panes_command(
     let agents: Vec<(String, u32)> = match serde_json::from_str::<Response>(&line)? {
         Response::Agents { agents } => agents
             .into_iter()
-            .filter(|a| a.state == botty::AgentState::Running && !a.no_resize)
+            .filter(|a| a.state == vessel::AgentState::Running && !a.no_resize)
             .map(|a| (a.id, a.pid))
             .collect(),
         Response::Error { message } => return Err(message.into()),
@@ -2873,14 +2873,14 @@ async fn run_resize_panes_command(
     }
     
     // Give a brief moment for the PTY resize to propagate
-    botty::runtime::time::sleep(std::time::Duration::from_millis(50)).await;
+    vessel::runtime::time::sleep(std::time::Duration::from_millis(50)).await;
     
     // Send explicit SIGWINCH to each agent process to ensure they redraw
     // Some TUI programs (like btop) need this extra signal to reliably redraw
     for (agent_id, (_, _)) in &pane_sizes {
         if let Some(&pid) = agent_pids.get(agent_id) {
             // Send SIGWINCH (28) to the process
-            let _ = botty::sys::kill(pid as i32, libc::SIGWINCH);
+            let _ = vessel::sys::kill(pid as i32, libc::SIGWINCH);
             tracing::debug!("Sent SIGWINCH to {} (pid {})", agent_id, pid);
         }
     }
@@ -2972,7 +2972,7 @@ mod tests {
             payload: "hello\n".into(),
         }];
         let script = generate_test_script("agent-1", &commands);
-        assert!(script.contains("botty send -n \"$AGENT\" 'hello'"));
+        assert!(script.contains("vessel send -n \"$AGENT\" 'hello'"));
         assert!(script.contains("# Command 1: send text (with newline)"));
     }
 
@@ -2984,7 +2984,7 @@ mod tests {
             payload: "hello".into(),
         }];
         let script = generate_test_script("agent-1", &commands);
-        assert!(script.contains("botty send \"$AGENT\" 'hello'"));
+        assert!(script.contains("vessel send \"$AGENT\" 'hello'"));
         assert!(script.contains("# Command 1: send text"));
         assert!(!script.contains("(with newline)"));
     }
@@ -2997,7 +2997,7 @@ mod tests {
             payload: "1b5b41".into(),
         }];
         let script = generate_test_script("agent-1", &commands);
-        assert!(script.contains("botty send-bytes \"$AGENT\" 1b5b41"));
+        assert!(script.contains("vessel send-bytes \"$AGENT\" 1b5b41"));
     }
 
     #[test]
@@ -3008,7 +3008,7 @@ mod tests {
             payload: "enter".into(),
         }];
         let script = generate_test_script("agent-1", &commands);
-        assert!(script.contains("botty send-keys \"$AGENT\" 'enter'"));
+        assert!(script.contains("vessel send-keys \"$AGENT\" 'enter'"));
     }
 
     #[test]

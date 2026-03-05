@@ -4,4 +4,4 @@ Resumed work on bd-3aj (environment variable inheritance bug). Responded to Bob'
 - Added tests in tests/cli.rs (test_spawn_pass_env, test_spawn_pass_env_nonexistent)
 - All tests pass
 
-Created review cr-2rll and requested security review via @botty-security (auto-spawned). Waiting for reviewer feedback before merge.
+Created review cr-2rll and requested security review via @vessel-security (auto-spawned). Waiting for reviewer feedback before merge.

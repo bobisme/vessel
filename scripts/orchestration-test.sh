@@ -1,7 +1,7 @@
 #!/bin/bash
 # orchestration-test.sh - Simulate multi-agent orchestration workflow
 #
-# This script tests botty from the perspective of an orchestrating agent
+# This script tests vessel from the perspective of an orchestrating agent
 # that spawns and coordinates multiple worker agents.
 #
 # Usage: ./scripts/orchestration-test.sh [--verbose]
@@ -11,7 +11,7 @@ set -e
 VERBOSE=${1:-}
 # Use pre-built binary for speed (build first if needed)
 cargo build --quiet 2>/dev/null || true
-BOTTY="./target/debug/botty"
+BOTTY="./target/debug/vessel"
 
 # Colors for output
 RED='\033[0;31m'
@@ -30,7 +30,7 @@ cleanup() {
 	$BOTTY kill backend-worker 2>/dev/null || true
 	$BOTTY kill test-runner 2>/dev/null || true
 	$BOTTY shutdown 2>/dev/null || true
-	rm -rf /tmp/botty-test-app 2>/dev/null || true
+	rm -rf /tmp/vessel-test-app 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -68,8 +68,8 @@ log "Verified: $RUNNING agents running"
 log "=== Phase 2: Parallel Task Assignment ==="
 
 # Send tasks to workers in parallel
-$BOTTY send frontend-worker 'mkdir -p /tmp/botty-test-app/src/components && echo "export const Button = () => <button>Click</button>" > /tmp/botty-test-app/src/components/Button.tsx && echo "FRONTEND_DONE"'
-$BOTTY send backend-worker 'mkdir -p /tmp/botty-test-app/src/api && echo "export const api = { fetch: () => {} }" > /tmp/botty-test-app/src/api/index.ts && echo "BACKEND_DONE"'
+$BOTTY send frontend-worker 'mkdir -p /tmp/vessel-test-app/src/components && echo "export const Button = () => <button>Click</button>" > /tmp/vessel-test-app/src/components/Button.tsx && echo "FRONTEND_DONE"'
+$BOTTY send backend-worker 'mkdir -p /tmp/vessel-test-app/src/api && echo "export const api = { fetch: () => {} }" > /tmp/vessel-test-app/src/api/index.ts && echo "BACKEND_DONE"'
 
 log "Tasks dispatched to frontend and backend workers"
 
@@ -85,14 +85,14 @@ log "Backend worker completed"
 log "=== Phase 4: Coordinate Verification ==="
 
 # Have test-runner verify the work
-$BOTTY send test-runner 'ls /tmp/botty-test-app/src/components/Button.tsx && ls /tmp/botty-test-app/src/api/index.ts && echo "VERIFY_DONE"'
+$BOTTY send test-runner 'ls /tmp/vessel-test-app/src/components/Button.tsx && ls /tmp/vessel-test-app/src/api/index.ts && echo "VERIFY_DONE"'
 $BOTTY wait test-runner --contains "VERIFY_DONE" --timeout 5
 log "Test runner verified files exist"
 
 log "=== Phase 5: Test exec command ==="
 
 # Use exec for quick operations
-CONTENT=$($BOTTY exec -- cat /tmp/botty-test-app/src/components/Button.tsx)
+CONTENT=$($BOTTY exec -- cat /tmp/vessel-test-app/src/components/Button.tsx)
 if [[ "$CONTENT" == *"Button"* ]]; then
 	log "exec command works: retrieved Button component"
 else

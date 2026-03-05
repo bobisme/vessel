@@ -1,10 +1,10 @@
-//! Integration tests for botty server/client IPC.
+//! Integration tests for vessel server/client IPC.
 //!
 //! Each test uses a unique socket path to avoid conflicts.
 
-use botty::protocol::{AgentState, AttachEndReason};
-use botty::runtime;
-use botty::{Client, Request, Response, Server};
+use vessel::protocol::{AgentState, AttachEndReason};
+use vessel::runtime;
+use vessel::{Client, Request, Response, Server};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -15,7 +15,7 @@ static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 fn unique_socket_path() -> PathBuf {
     let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
     let pid = std::process::id();
-    PathBuf::from(format!("/tmp/botty-test-{pid}-{id}.sock"))
+    PathBuf::from(format!("/tmp/vessel-test-{pid}-{id}.sock"))
 }
 
 /// Helper to clean up socket after test.
@@ -27,7 +27,7 @@ impl Drop for SocketCleanup {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_server_ping_pong() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -55,7 +55,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_spawn_and_list() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -129,7 +129,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_spawn_send_snapshot() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -176,7 +176,7 @@ botty::async_test! {
         let response = client
             .request(Request::Send {
                 id: agent_id.clone(),
-                data: "echo BOTTY_TEST_OUTPUT".into(),
+                data: "echo VESSEL_TEST_OUTPUT".into(),
                 newline: true,
                 enter: false,
             })
@@ -200,7 +200,7 @@ botty::async_test! {
         match response {
             Response::Snapshot { content, .. } => {
                 assert!(
-                    content.contains("BOTTY_TEST_OUTPUT"),
+                    content.contains("VESSEL_TEST_OUTPUT"),
                     "snapshot should contain our output: {}",
                     content
                 );
@@ -222,7 +222,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_agent_not_found() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -259,7 +259,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_screen_cursor_movement() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -341,7 +341,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_transcript_tail() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -425,7 +425,7 @@ botty::async_test! {
 // Attach mode tests
 // ============================================================================
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_attach_and_detach() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -528,7 +528,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_attach_readonly_mode() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -615,7 +615,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_attach_nonexistent_agent() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -664,7 +664,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_attach_receives_output() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -775,7 +775,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_attach_agent_exit() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -872,7 +872,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_kill_all() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());
@@ -952,7 +952,7 @@ botty::async_test! {
     }
 }
 
-botty::async_test! {
+vessel::async_test! {
     async fn test_kill_all_no_agents() {
         let socket_path = unique_socket_path();
         let _cleanup = SocketCleanup(socket_path.clone());

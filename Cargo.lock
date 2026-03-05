@@ -200,38 +200,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "botty"
-version = "0.16.0"
-dependencies = [
- "assert_cmd",
- "asupersync",
- "base64",
- "clap",
- "dirs",
- "futures",
- "hex",
- "libc",
- "names",
- "nix",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "predicates",
- "regex",
- "serde",
- "serde_json",
- "similar",
- "strip-ansi-escapes",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "vt100",
-]
-
-[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2077,6 +2045,38 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "vessel"
+version = "0.16.0"
+dependencies = [
+ "assert_cmd",
+ "asupersync",
+ "base64",
+ "clap",
+ "dirs",
+ "futures",
+ "hex",
+ "libc",
+ "names",
+ "nix",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "predicates",
+ "regex",
+ "serde",
+ "serde_json",
+ "similar",
+ "strip-ansi-escapes",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "vt100",
+]
 
 [[package]]
 name = "virtue-next"

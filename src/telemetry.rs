@@ -42,8 +42,8 @@ impl Drop for TelemetryGuard {
 
 /// Initialize telemetry based on `OTEL_EXPORTER_OTLP_ENDPOINT`.
 ///
-/// When `verbose` is true, the default filter level is `botty=debug`;
-/// otherwise `botty=warn`. The `RUST_LOG` env var overrides both.
+/// When `verbose` is true, the default filter level is `vessel=debug`;
+/// otherwise `vessel=warn`. The `RUST_LOG` env var overrides both.
 ///
 /// Returns a guard that must be held until the program exits.
 /// Dropping the guard flushes any pending spans and logs.
@@ -58,26 +58,26 @@ pub fn init(verbose: bool) -> TelemetryGuard {
         Some(_) => init_otlp(verbose),
         #[cfg(not(feature = "otel"))]
         Some(_) => {
-            eprintln!("warning: OTEL_EXPORTER_OTLP_ENDPOINT set but botty built without 'otel' feature");
+            eprintln!("warning: OTEL_EXPORTER_OTLP_ENDPOINT set but vessel built without 'otel' feature");
             init_fmt(verbose)
         }
     }
 }
 
-/// Default tracing: human-readable fmt to stderr (botty's existing behavior).
+/// Default tracing: human-readable fmt to stderr (vessel's existing behavior).
 ///
-/// If `BOTTY_LOG` is set to a file path, logs are also written there (appended).
-/// The file log always uses `botty=info` minimum so server lifecycle events
+/// If `VESSEL_LOG` is set to a file path, logs are also written there (appended).
+/// The file log always uses `vessel=info` minimum so server lifecycle events
 /// are captured even without `--verbose`.
 fn init_fmt(verbose: bool) -> TelemetryGuard {
     use tracing_subscriber::layer::SubscriberExt as _;
     use tracing_subscriber::util::SubscriberInitExt as _;
 
-    let default = if verbose { "botty=debug" } else { "botty=warn" };
+    let default = if verbose { "vessel=debug" } else { "vessel=warn" };
     let stderr_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(default));
 
-    if let Some(log_path) = std::env::var("BOTTY_LOG").ok().filter(|s| !s.is_empty()) {
+    if let Some(log_path) = std::env::var("VESSEL_LOG").ok().filter(|s| !s.is_empty()) {
         // Open log file (append mode, create if missing)
         match std::fs::OpenOptions::new()
             .create(true)
@@ -89,10 +89,10 @@ fn init_fmt(verbose: bool) -> TelemetryGuard {
                 // server lifecycle events are always captured.
                 let filter = if verbose {
                     EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("botty=debug"))
+                        .unwrap_or_else(|_| EnvFilter::new("vessel=debug"))
                 } else {
                     EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| EnvFilter::new("botty=info"))
+                        .unwrap_or_else(|_| EnvFilter::new("vessel=info"))
                 };
 
                 let file = std::sync::Mutex::new(file);
@@ -104,7 +104,7 @@ fn init_fmt(verbose: bool) -> TelemetryGuard {
             }
             Err(e) => {
                 // Fall back to stderr-only, but warn about it
-                eprintln!("warning: BOTTY_LOG={log_path}: {e}");
+                eprintln!("warning: VESSEL_LOG={log_path}: {e}");
                 tracing_subscriber::fmt()
                     .with_env_filter(stderr_filter)
                     .with_writer(std::io::stderr)
@@ -205,7 +205,7 @@ fn init_otlp(verbose: bool) -> TelemetryGuard {
     install_parent_context();
 
     // --- Subscriber ---
-    let default = if verbose { "botty=debug" } else { "botty=warn" };
+    let default = if verbose { "vessel=debug" } else { "vessel=warn" };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     tracing_subscriber::registry()

@@ -1,6 +1,6 @@
 //! Protocol types for client-server IPC.
 //!
-//! All communication between the botty CLI (client) and the botty server
+//! All communication between the vessel CLI (client) and the vessel server
 //! happens over a Unix socket using JSON-serialized Request/Response messages.
 
 use serde::{Deserialize, Serialize};
@@ -424,7 +424,7 @@ pub enum AttachEndReason {
 
 /// Events streamed from the server.
 ///
-/// Used with the `botty events` command for reactive orchestration.
+/// Used with the `vessel events` command for reactive orchestration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {

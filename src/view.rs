@@ -1,4 +1,4 @@
-//! Viewer integration for botty.
+//! Viewer integration for vessel.
 //!
 //! Provides tmux-based viewing of agent output.
 
@@ -45,13 +45,13 @@ impl ViewMode {
     }
 }
 
-/// tmux session manager for botty view.
+/// tmux session manager for vessel view.
 pub struct TmuxView {
     session_name: String,
     /// Set of agent IDs with active panes/windows
     active_panes: HashSet<String>,
-    /// Path to botty binary (for spawning tail commands)
-    botty_path: String,
+    /// Path to vessel binary (for spawning tail commands)
+    vessel_path: String,
     /// Layout mode (panes vs windows)
     mode: ViewMode,
 }
@@ -59,17 +59,17 @@ pub struct TmuxView {
 impl TmuxView {
     /// Create a new tmux view manager.
     #[must_use]
-    pub fn new(botty_path: String) -> Self {
-        Self::with_mode(botty_path, ViewMode::default())
+    pub fn new(vessel_path: String) -> Self {
+        Self::with_mode(vessel_path, ViewMode::default())
     }
 
     /// Create a new tmux view manager with specified mode.
     #[must_use]
-    pub fn with_mode(botty_path: String, mode: ViewMode) -> Self {
+    pub fn with_mode(vessel_path: String, mode: ViewMode) -> Self {
         Self {
-            session_name: "botty".to_string(),
+            session_name: "vessel".to_string(),
             active_panes: HashSet::new(),
-            botty_path,
+            vessel_path,
             mode,
         }
     }
@@ -220,7 +220,7 @@ impl TmuxView {
         // The pane-died hook only respawns the last pane as placeholder.
         let tail_cmd = format!(
             "{} attach --readonly '{}'",
-            self.botty_path, agent_id
+            self.vessel_path, agent_id
         );
 
         match self.mode {
@@ -505,7 +505,7 @@ impl TmuxView {
     │                                     │
     │      Waiting for agents...          │
     │                                     │
-    │   Run: botty spawn -- <command>     │
+    │   Run: vessel spawn -- <command>     │
     │                                     │
     ╰─────────────────────────────────────╯
 '; sleep 3600"#;  // 1-hour timeout to avoid running forever if abandoned
@@ -716,7 +716,7 @@ impl TmuxView {
     pub fn respawn_pane(&self, pane_id: &str, agent_id: &str) -> Result<(), ViewError> {
         let attach_cmd = format!(
             "{} attach --readonly '{}'",
-            self.botty_path, agent_id
+            self.vessel_path, agent_id
         );
 
         let status = Command::new("tmux")
@@ -774,20 +774,20 @@ impl TmuxView {
         Ok(sizes)
     }
 
-    /// Set up a tmux hook to call botty resize when panes are resized.
+    /// Set up a tmux hook to call vessel resize when panes are resized.
     /// The hook runs a script that resizes all agents to match their pane sizes.
     pub fn setup_resize_hook(&self) -> Result<(), ViewError> {
         // Create a resize command that will be called on pane resize
-        // This iterates through panes and calls botty resize for each
+        // This iterates through panes and calls vessel resize for each
         let resize_cmd = format!(
             r#"run-shell '{} resize-all-panes'"#,
-            self.botty_path
+            self.vessel_path
         );
 
         // Note: tmux hooks are tricky. For now, we'll use a simpler approach
         // and just resize on attach and when panes are added.
         // A proper hook would be:
-        // tmux set-hook -t botty after-resize-pane "run-shell '...'"
+        // tmux set-hook -t vessel after-resize-pane "run-shell '...'"
         
         // For now, this is a no-op placeholder. The resize-all-panes command
         // doesn't exist yet, and implementing proper hooks requires more work.
@@ -796,9 +796,9 @@ impl TmuxView {
         Ok(())
     }
 
-    /// Get the botty path (for external use in resize commands).
+    /// Get the vessel path (for external use in resize commands).
     #[must_use]
-    pub fn botty_path(&self) -> &str {
-        &self.botty_path
+    pub fn vessel_path(&self) -> &str {
+        &self.vessel_path
     }
 }

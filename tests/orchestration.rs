@@ -3,14 +3,14 @@
 //! These tests demonstrate and verify the primary use case: one agent (orchestrator)
 //! spawning and coordinating multiple TUI agents.
 
-use botty::testing::TestHarness;
+use vessel::testing::TestHarness;
 use std::time::Duration;
 
 /// Scenario: Orchestrator spawns multiple worker agents and coordinates their work.
 ///
 /// This simulates a coding agent spawning multiple sub-agents to work on different
 /// parts of a task, then collecting their results.
-botty::async_test! {
+vessel::async_test! {
     async fn test_orchestrator_spawns_workers() {
         let harness = TestHarness::new().await;
 
@@ -63,7 +63,7 @@ botty::async_test! {
 /// Scenario: Sequential agent pipeline - output of one feeds into another.
 ///
 /// Simulates a pipeline where Agent A produces data, Agent B processes it.
-botty::async_test! {
+vessel::async_test! {
     async fn test_agent_pipeline() {
         let harness = TestHarness::new().await;
         let timeout = Duration::from_secs(5);
@@ -75,7 +75,7 @@ botty::async_test! {
             .expect("spawn producer");
 
         // Wait for prompt
-        botty::runtime::time::sleep(Duration::from_millis(200)).await;
+        vessel::runtime::time::sleep(Duration::from_millis(200)).await;
 
         // Producer generates data
         producer.send("DATA_ITEM_1='hello'").await.expect("set data 1");
@@ -94,7 +94,7 @@ botty::async_test! {
             .await
             .expect("spawn consumer");
 
-        botty::runtime::time::sleep(Duration::from_millis(200)).await;
+        vessel::runtime::time::sleep(Duration::from_millis(200)).await;
 
         // Consumer receives the "data" and processes it
         consumer.send("RECEIVED='hello world'").await.expect("receive");
@@ -117,7 +117,7 @@ botty::async_test! {
 /// Scenario: Interactive agent that responds to multiple commands.
 ///
 /// Simulates an interactive TUI-style agent that maintains state across commands.
-botty::async_test! {
+vessel::async_test! {
     async fn test_interactive_stateful_agent() {
         let harness = TestHarness::new().await;
         let timeout = Duration::from_secs(5);
@@ -128,7 +128,7 @@ botty::async_test! {
             .expect("spawn agent");
 
         // Wait for initial prompt
-        botty::runtime::time::sleep(Duration::from_millis(200)).await;
+        vessel::runtime::time::sleep(Duration::from_millis(200)).await;
 
         // Command 1: Set up state
         agent.send("COUNTER=0").await.expect("init counter");
@@ -167,7 +167,7 @@ botty::async_test! {
 }
 
 /// Scenario: Agent failure handling - one agent crashes, others continue.
-botty::async_test! {
+vessel::async_test! {
     async fn test_agent_failure_isolation() {
         let harness = TestHarness::new().await;
         let timeout = Duration::from_secs(5);
@@ -196,7 +196,7 @@ botty::async_test! {
             .expect("failing should start");
 
         // Wait for failing agent to exit
-        botty::runtime::time::sleep(Duration::from_millis(500)).await;
+        vessel::runtime::time::sleep(Duration::from_millis(500)).await;
 
         // Stable agent should still be responsive
         let snapshot = stable.snapshot().await.expect("stable should still work");
@@ -212,7 +212,7 @@ botty::async_test! {
 }
 
 /// Scenario: Rapid spawn/kill cycle - stress test for resource management.
-botty::async_test! {
+vessel::async_test! {
     async fn test_rapid_spawn_kill_cycle() {
         let harness = TestHarness::new().await;
 
@@ -236,7 +236,7 @@ botty::async_test! {
 }
 
 /// Scenario: Concurrent commands to multiple agents.
-botty::async_test! {
+vessel::async_test! {
     async fn test_concurrent_agent_commands() {
         let harness = TestHarness::new().await;
         let timeout = Duration::from_secs(5);
@@ -249,7 +249,7 @@ botty::async_test! {
             .expect("spawn all agents");
 
         // Wait for shells to start
-        botty::runtime::time::sleep(Duration::from_millis(300)).await;
+        vessel::runtime::time::sleep(Duration::from_millis(300)).await;
 
         // Send commands to all agents concurrently
         let send_futures: Vec<_> = agents
@@ -302,7 +302,7 @@ botty::async_test! {
 /// Scenario: Simulated TUI agent with screen updates.
 ///
 /// Uses a simple script that updates the screen, simulating TUI behavior.
-botty::async_test! {
+vessel::async_test! {
     async fn test_tui_screen_updates() {
         let harness = TestHarness::new().await;
 

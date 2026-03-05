@@ -1,4 +1,4 @@
-//! The botty server.
+//! The vessel server.
 //!
 //! Owns PTYs, agents, transcripts, and virtual screens.
 //! Listens on a Unix socket for client requests.
@@ -63,7 +63,7 @@ pub enum ServerError {
     AlreadyRunning,
 }
 
-/// The botty server.
+/// The vessel server.
 pub struct Server {
     socket_path: PathBuf,
     manager: Arc<Mutex<AgentManager>>,
@@ -188,7 +188,7 @@ impl Server {
                     drop(mgr);
                     if running > 0 {
                         warn!("SIGTERM received but {} agents still running — ignoring \
-                               (use `botty shutdown` to force)", running);
+                               (use `vessel shutdown` to force)", running);
                     } else {
                         info!("SIGTERM received with no running agents, shutting down");
                         break;
@@ -200,7 +200,7 @@ impl Server {
                     drop(mgr);
                     if running > 0 {
                         warn!("SIGINT received but {} agents still running — ignoring \
-                               (use `botty shutdown` to force)", running);
+                               (use `vessel shutdown` to force)", running);
                     } else {
                         info!("SIGINT received with no running agents, shutting down");
                         break;
@@ -490,7 +490,7 @@ async fn handle_request(
                     "--user".to_string(),
                     "--scope".to_string(),
                     "--collect".to_string(),
-                    format!("--unit=botty-agent-{unit_id}"),
+                    format!("--unit=vessel-agent-{unit_id}"),
                 ];
                 if let Some(ref limit) = wrap_memory_limit {
                     wrapped.extend([

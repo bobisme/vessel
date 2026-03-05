@@ -1,6 +1,6 @@
-# Testing botty
+# Testing vessel
 
-This document describes the testing methodology for botty, with a focus on usability testing from an AI agent's perspective.
+This document describes the testing methodology for vessel, with a focus on usability testing from an AI agent's perspective.
 
 ## Test Categories
 
@@ -59,7 +59,7 @@ cargo test test_name
 
 ### Purpose
 
-Evaluate botty from the perspective of an orchestrating AI agent that needs to:
+Evaluate vessel from the perspective of an orchestrating AI agent that needs to:
 1. Spawn multiple worker agents (simulating coding agents)
 2. Assign tasks to workers
 3. Wait for task completion
@@ -75,26 +75,26 @@ An orchestrator spawns specialized workers and coordinates their work:
 
 ```bash
 # Spawn named workers
-botty spawn --name frontend-worker -- bash
-botty spawn --name backend-worker -- bash
-botty spawn --name test-runner -- bash
+vessel spawn --name frontend-worker -- bash
+vessel spawn --name backend-worker -- bash
+vessel spawn --name test-runner -- bash
 
 # Assign tasks
-botty send frontend-worker 'create_component Button'
-botty send backend-worker 'create_api endpoint'
+vessel send frontend-worker 'create_component Button'
+vessel send backend-worker 'create_api endpoint'
 
 # Wait for completion
-botty wait frontend-worker --contains "DONE" --timeout 30
-botty wait backend-worker --contains "DONE" --timeout 30
+vessel wait frontend-worker --contains "DONE" --timeout 30
+vessel wait backend-worker --contains "DONE" --timeout 30
 
 # Coordinate verification
-botty send test-runner 'verify_files'
-botty wait test-runner --contains "PASS"
+vessel send test-runner 'verify_files'
+vessel wait test-runner --contains "PASS"
 
 # Cleanup
-botty kill -9 frontend-worker
-botty kill -9 backend-worker  
-botty kill -9 test-runner
+vessel kill -9 frontend-worker
+vessel kill -9 backend-worker  
+vessel kill -9 test-runner
 ```
 
 #### Scenario 2: Quick One-Off Commands
@@ -103,13 +103,13 @@ Using `exec` for simple operations that don't need persistent agents:
 
 ```bash
 # Get file contents
-botty exec -- cat src/main.rs
+vessel exec -- cat src/main.rs
 
 # Run a build check
-botty exec -- cargo check 2>&1
+vessel exec -- cargo check 2>&1
 
 # Quick git status
-botty exec -- git status --short
+vessel exec -- git status --short
 ```
 
 #### Scenario 3: Monitoring Long-Running Tasks
@@ -117,9 +117,9 @@ botty exec -- git status --short
 Using `tail -f` to watch agent output:
 
 ```bash
-botty spawn --name builder -- bash
-botty send builder 'cargo build 2>&1'
-botty tail -f builder  # Watch build output in real-time
+vessel spawn --name builder -- bash
+vessel send builder 'cargo build 2>&1'
+vessel tail -f builder  # Watch build output in real-time
 ```
 
 ### Running the Simulation
@@ -200,7 +200,7 @@ fn test_cli_feature() {
     let mut env = TestEnv::new();
     env.start_server();
     
-    env.botty()
+    env.vessel()
         .args(["command", "arg"])
         .assert()
         .success()

@@ -1,4 +1,4 @@
-//! Command-line interface for botty.
+//! Command-line interface for vessel.
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -99,10 +99,10 @@ pub fn parse_key_sequence(s: &str) -> Option<Vec<u8>> {
 
 /// PTY-based agent runtime.
 #[derive(Debug, Parser)]
-#[command(name = "botty", version, about)]
+#[command(name = "vessel", version, about)]
 pub struct Cli {
     /// Path to the Unix socket.
-    #[arg(long, env = "BOTTY_SOCKET")]
+    #[arg(long, env = "VESSEL_SOCKET")]
     pub socket: Option<PathBuf>,
 
     /// Enable verbose logging.
@@ -173,7 +173,7 @@ pub enum Command {
 
         /// Enable command recording for this agent.
         /// All send/send-keys commands will be captured with timestamps.
-        /// Retrieve recordings with `botty recording <agent-id>`.
+        /// Retrieve recordings with `vessel recording <agent-id>`.
         #[arg(long)]
         record: bool,
 
@@ -432,17 +432,17 @@ pub enum Command {
 SUBAGENT WORKFLOW:
   Spawn a child, wait for it to finish, then check its exit code:
 
-    child=$(botty spawn --name parent/child -- my-command --flag)
-    botty wait --exited \"$child\"
+    child=$(vessel spawn --name parent/child -- my-command --flag)
+    vessel wait --exited \"$child\"
     echo \"Exit code: $?\"
 
   Wait for multiple agents to exit:
 
-    botty wait --exited worker-1 worker-2 worker-3
+    vessel wait --exited worker-1 worker-2 worker-3
 
   Combined with output conditions (single agent only):
 
-    botty wait --exited --contains 'done' --print my-agent")]
+    vessel wait --exited --contains 'done' --print my-agent")]
     Wait {
         /// Agent ID(s). Multiple IDs can be specified with --exited.
         id: Vec<String>,
@@ -602,7 +602,7 @@ SUBAGENT WORKFLOW:
         clear: bool,
     },
 
-    /// Resize all agents in a botty view session to match their pane sizes.
+    /// Resize all agents in a vessel view session to match their pane sizes.
     /// This is typically called from a tmux hook, not manually.
     #[command(hide = true)]
     ResizePanes {
@@ -634,7 +634,7 @@ SUBAGENT WORKFLOW:
     /// Reads an agent's recording and outputs an executable bash script
     /// that replays the recorded commands. Timing delays are derived from
     /// recording timestamps (capped at 2s). Redirect output to a file:
-    ///   botty gen-test <agent-id> > test.sh && chmod +x test.sh
+    ///   vessel gen-test <agent-id> > test.sh && chmod +x test.sh
     GenTest {
         /// Agent ID.
         id: String,

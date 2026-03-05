@@ -1,5 +1,5 @@
 [package]
-name = "botty-fuzz"
+name = "vessel-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
@@ -12,7 +12,7 @@ libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-[dependencies.botty]
+[dependencies.vessel]
 path = ".."
 
 [[bin]]

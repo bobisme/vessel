@@ -1,4 +1,4 @@
-//! botty — PTY-based Agent Runtime
+//! vessel — PTY-based Agent Runtime
 //!
 //! A tmux-style, user-scoped PTY server for running and coordinating
 //! interactive agents as terminal programs.
