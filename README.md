@@ -4,6 +4,8 @@
 
 It is designed for AI orchestrators, test harnesses, and automation systems that need real terminal semantics (not just stdout pipes).
 
+![Summoning Pit](images/vessel-embed.jpg)
+
 ## What vessel is (and is not)
 
 - **Is:** local control plane for interactive worker processes (`spawn`, `send`, `wait`, `snapshot`, `events`, `attach`, `view`).
