@@ -20,9 +20,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
-use tokio::time::Instant;
+use crate::runtime::sync::Mutex;
+use crate::runtime::task::JoinHandle;
+use crate::runtime::time::Instant;
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -59,13 +59,13 @@ impl TestHarness {
         
         // Start server in background
         let server_socket = socket_path.clone();
-        let server_handle = tokio::spawn(async move {
+        let server_handle = crate::runtime::task::spawn(async move {
             let mut server = Server::new(server_socket);
             let _ = server.run().await;
         });
 
         // Give server time to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        crate::runtime::time::sleep(Duration::from_millis(100)).await;
 
         let client = Client::new(socket_path.clone());
 
@@ -285,7 +285,7 @@ impl AgentHandle {
             if snapshot.contains(needle) {
                 return Ok(snapshot);
             }
-            tokio::time::sleep(poll_interval).await;
+            crate::runtime::time::sleep(poll_interval).await;
         }
 
         Err(TestError::Timeout)
@@ -306,7 +306,7 @@ impl AgentHandle {
             if re.is_match(&snapshot) {
                 return Ok(snapshot);
             }
-            tokio::time::sleep(poll_interval).await;
+            crate::runtime::time::sleep(poll_interval).await;
         }
 
         Err(TestError::Timeout)
@@ -327,7 +327,7 @@ impl AgentHandle {
         let mut stable_since = Instant::now();
 
         while Instant::now() < deadline {
-            tokio::time::sleep(poll_interval).await;
+            crate::runtime::time::sleep(poll_interval).await;
 
             let current = self.snapshot().await?;
             if current == last_snapshot {
@@ -376,7 +376,7 @@ impl AgentHandle {
             if !snapshot.contains(needle) {
                 return Ok(snapshot);
             }
-            tokio::time::sleep(poll_interval).await;
+            crate::runtime::time::sleep(poll_interval).await;
         }
 
         Err(TestError::Timeout)
@@ -509,7 +509,7 @@ mod tests {
         let agent = harness.spawn(&["bash"]).await.expect("spawn failed");
 
         // Wait for prompt
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        crate::runtime::time::sleep(Duration::from_millis(200)).await;
 
         // Send command
         agent.send("echo INTERACTIVE_TEST").await.expect("send failed");

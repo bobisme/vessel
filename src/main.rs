@@ -292,7 +292,7 @@ async fn run_doctor(
         let metadata = std::fs::metadata(&socket_path)?;
         if metadata.file_type().is_socket() {
             // Try to connect to see if daemon is running
-            match tokio::net::UnixStream::connect(&socket_path).await {
+            match botty::runtime::net::UnixStream::connect(&socket_path).await {
                 Ok(_) => println!("[OK] daemon responding"),
                 Err(_) => {
                     println!("[WARN] socket exists but daemon not responding (stale?)");
@@ -947,7 +947,7 @@ async fn run_client(
                         }
                     }
 
-                    tokio::time::sleep(poll_interval).await;
+                    botty::runtime::time::sleep(poll_interval).await;
                 }
             } else {
                 // One-shot mode: just get current tail
@@ -1219,8 +1219,8 @@ async fn run_client(
                 // Event-based approach: wait for agent(s) to exit
                 use botty::protocol::Event;
                 use std::collections::HashMap;
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                use tokio::net::UnixStream;
+                use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                use botty::runtime::net::UnixStream;
 
                 // First check current state - agents may have already exited
                 let response = client.request(Request::List { labels: vec![] }).await?;
@@ -1273,7 +1273,7 @@ async fn run_client(
                         let read_fut = reader.read_line(&mut line);
                         let result = if let Some(dl) = deadline {
                             let remaining = dl - Instant::now();
-                            match tokio::time::timeout(remaining, read_fut).await {
+                            match botty::runtime::time::timeout(remaining, read_fut).await {
                                 Ok(r) => r,
                                 Err(_) => {
                                     eprintln!("error: timeout waiting for agent(s) to exit");
@@ -1443,7 +1443,7 @@ async fn run_client(
                     }
 
                     last_snapshot = snapshot;
-                    tokio::time::sleep(poll_interval).await;
+                    botty::runtime::time::sleep(poll_interval).await;
                 }
             }
         }
@@ -1530,7 +1530,7 @@ async fn run_client(
                         std::process::exit(1);
                     }
 
-                    tokio::time::sleep(poll_interval).await;
+                    botty::runtime::time::sleep(poll_interval).await;
 
                     // Get new snapshot
                     let response = client
@@ -1650,7 +1650,7 @@ async fn run_client(
             };
 
             // Give shell time to start
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            botty::runtime::time::sleep(Duration::from_millis(100)).await;
 
             // Send the command with a unique marker for detecting completion
             // The marker includes the exit code: __BOTTY_DONE_<pid>_<exitcode>__
@@ -1763,7 +1763,7 @@ async fn run_client(
                     break;
                 }
 
-                tokio::time::sleep(poll_interval).await;
+                botty::runtime::time::sleep(poll_interval).await;
             }
 
             // Kill the agent
@@ -1794,7 +1794,7 @@ async fn run_attach_command(
     detach_key: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use botty::cli::parse_key_notation;
-    use tokio::net::UnixStream;
+    use botty::runtime::net::UnixStream;
 
     // Parse detach key
     let detach_prefix = parse_key_notation(&detach_key)
@@ -1810,12 +1810,12 @@ async fn run_attach_command(
             {
                 // Start server in background
                 let socket_path_clone = socket_path.clone();
-                tokio::spawn(async move {
+                botty::runtime::task::spawn(async move {
                     let mut server = Server::new(socket_path_clone);
                     let _ = server.run().await;
                 });
                 // Give server time to start
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                botty::runtime::time::sleep(botty::runtime::time::Duration::from_millis(100)).await;
                 UnixStream::connect(&socket_path).await?
             } else {
                 return Err(e.into());
@@ -1859,8 +1859,8 @@ async fn run_events_command(
     filter: Vec<String>,
     include_output: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     // Connect to the server (don't auto-start - events are useless with no agents)
     let stream = UnixStream::connect(&socket_path).await?;
@@ -1915,8 +1915,8 @@ async fn run_subscribe_command(
     format: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use botty::protocol::Event;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     // Must specify at least one filter
     if ids.is_empty() && labels.is_empty() {
@@ -2058,8 +2058,8 @@ async fn run_view_command(
     new_session: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use botty::ViewMode;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     // Only tmux is supported for now
     if mux != "tmux" {
@@ -2097,7 +2097,7 @@ async fn run_view_command(
                     let mut connected = None;
                     let mut delay_ms = 50u64;
                     for _ in 0..20 {
-                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        botty::runtime::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                         if let Ok(s) = UnixStream::connect(&socket_path).await {
                             connected = Some(s);
                             break;
@@ -2195,7 +2195,7 @@ async fn run_view_command(
 
         // Resize agents to match their pane sizes
         if auto_resize && !current_agents.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            botty::runtime::time::sleep(std::time::Duration::from_millis(300)).await;
 
             if let Err(e) = resize_agents_to_panes(&socket_path, &view).await {
                 tracing::warn!("Failed to resize agents: {}", e);
@@ -2214,7 +2214,7 @@ async fn run_view_command(
     // Spawn a task to listen for events and manage panes
     let socket_path_clone = socket_path.clone();
     let existing_agents = current_agent_ids.clone();
-    let event_handle = tokio::spawn(async move {
+    let event_handle = botty::runtime::task::spawn(async move {
         if let Err(e) = run_view_event_loop(socket_path_clone, existing_agents, view_mode).await {
             tracing::warn!("Event loop error: {}", e);
         }
@@ -2222,7 +2222,7 @@ async fn run_view_command(
 
     // Attach to tmux (this blocks until user detaches or session ends)
     // Run in spawn_blocking so we don't block the async runtime
-    let attach_result = tokio::task::spawn_blocking(move || view.attach()).await?;
+    let attach_result = botty::runtime::task::spawn_blocking(move || view.attach()).await?;
 
     // Unbind Ctrl+P so it doesn't leak into other tmux sessions
     let _ = std::process::Command::new("tmux")
@@ -2271,8 +2271,8 @@ async fn run_view_event_loop(
     mode: botty::ViewMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use botty::protocol::Event;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     let stream = UnixStream::connect(&socket_path).await?;
     let (reader, mut writer) = stream.into_split();
@@ -2378,8 +2378,8 @@ async fn wait_for_dependencies(
     use botty::protocol::Event;
     use regex::Regex;
     use std::collections::{HashMap, HashSet};
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     // Parse wait_for specs into (agent_id, optional_pattern)
     let mut pattern_waits: HashMap<String, Option<Regex>> = HashMap::new();
@@ -2715,8 +2715,8 @@ async fn resize_agents_to_panes(
     socket_path: &std::path::Path,
     view: &TmuxView,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     let pane_sizes = view.get_pane_sizes()?;
 
@@ -2785,8 +2785,8 @@ async fn run_resize_panes_command(
     mode: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use botty::ViewMode;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-    use tokio::net::UnixStream;
+    use botty::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use botty::runtime::net::UnixStream;
 
     let view_mode = ViewMode::from_str(&mode)?;
     
@@ -2855,7 +2855,7 @@ async fn run_resize_panes_command(
     }
     
     // Give a brief moment for the PTY resize to propagate
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    botty::runtime::time::sleep(std::time::Duration::from_millis(50)).await;
     
     // Send explicit SIGWINCH to each agent process to ensure they redraw
     // Some TUI programs (like btop) need this extra signal to reliably redraw

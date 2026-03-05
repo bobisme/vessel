@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use crate::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use crate::runtime::net::UnixStream;
 use tracing::{debug, info, warn};
 
 /// Errors that can occur in the client.
@@ -105,7 +105,7 @@ impl Client {
 
         // Try to connect with retries
         for i in 0..50 {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            crate::runtime::time::sleep(Duration::from_millis(100)).await;
             match UnixStream::connect(&self.socket_path).await {
                 Ok(stream) => {
                     info!("Connected to server after {} attempts", i + 1);

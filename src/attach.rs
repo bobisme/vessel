@@ -6,8 +6,8 @@
 use crate::protocol::{AttachEndReason, Request, Response};
 use std::os::fd::{AsFd, OwnedFd};
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
+use crate::runtime::io::{AsyncReadExt, AsyncWriteExt};
+use crate::runtime::net::UnixStream;
 use tracing::{debug, info, warn};
 
 /// Errors during attach mode.
@@ -242,7 +242,7 @@ pub async fn run_attach(
     const MAX_INITIAL_SCREEN_SIZE: usize = 16 * 1024 * 1024;
     {
         use std::time::Duration;
-        use tokio::time::timeout;
+        use crate::runtime::time::timeout;
         
         let mut extra_buf = vec![0u8; 65536]; // Large buffer for screen data
         
@@ -310,8 +310,8 @@ async fn run_io_bridge(
     stream: &mut UnixStream,
     config: &AttachConfig,
 ) -> Result<AttachEndReason, AttachError> {
-    use tokio::io::{stdin, stdout};
-    use tokio::signal::unix::{signal, SignalKind};
+    use crate::runtime::io::{stdin, stdout};
+    use crate::runtime::signal::{signal, SignalKind};
 
     let mut stdin = stdin();
     let mut stdout = stdout();
@@ -322,13 +322,13 @@ async fn run_io_bridge(
     
     // Set up SIGWINCH handler for terminal resize
     let mut sigwinch = signal(SignalKind::window_change())
-        .map_err(|e| AttachError::Io(e))?;
+        .map_err(AttachError::Io)?;
     
     // Track current size to detect changes
     let mut current_size = get_terminal_size();
 
     loop {
-        tokio::select! {
+        crate::runtime::select! {
             // Handle SIGWINCH (terminal resize)
             // Skip in readonly mode - the view manages sizing via botty resize,
             // and sending resize requests from a readonly client can deadlock
