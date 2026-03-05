@@ -450,7 +450,7 @@ async fn send_data(stream: &mut UnixStream, data: &[u8]) -> Result<(), AttachErr
 async fn send_detach(stream: &mut UnixStream) -> Result<(), AttachError> {
     // Send an empty write or a special marker
     // For now, we'll just close our write side, which the server will detect
-    stream.shutdown().await.map_err(AttachError::Io)?;
+    crate::runtime::net::shutdown_write(stream).await.map_err(AttachError::Io)?;
     Ok(())
 }
 

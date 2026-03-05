@@ -206,8 +206,23 @@ fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String 
     script
 }
 
+#[cfg(feature = "runtime-tokio")]
 #[tokio::main]
 async fn main() {
+    main_inner().await;
+}
+
+#[cfg(feature = "runtime-asupersync")]
+fn main() {
+    let rt = asupersync::runtime::RuntimeBuilder::new()
+        .build()
+        .expect("failed to build asupersync runtime");
+    let handle = rt.handle();
+    botty::runtime::task::set_runtime_handle(handle);
+    rt.block_on(main_inner());
+}
+
+async fn main_inner() {
     let cli = Cli::parse();
 
     // Initialize telemetry (tracing + optional OTLP export).

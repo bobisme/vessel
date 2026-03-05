@@ -423,7 +423,8 @@ impl AgentHandle {
 mod tests {
     use super::*;
 
-    #[tokio::test]
+    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
+    #[cfg_attr(feature = "runtime-asupersync", test)]
     async fn test_harness_spawn_and_snapshot() {
         let harness = TestHarness::new().await;
 
@@ -444,7 +445,8 @@ mod tests {
         harness.shutdown().await;
     }
 
-    #[tokio::test]
+    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
+    #[cfg_attr(feature = "runtime-asupersync", test)]
     async fn test_harness_wait_for_stable() {
         let harness = TestHarness::new().await;
 
@@ -467,7 +469,8 @@ mod tests {
         harness.shutdown().await;
     }
 
-    #[tokio::test]
+    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
+    #[cfg_attr(feature = "runtime-asupersync", test)]
     async fn test_harness_multiple_agents() {
         let harness = TestHarness::new().await;
 
@@ -502,7 +505,8 @@ mod tests {
         harness.shutdown().await;
     }
 
-    #[tokio::test]
+    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
+    #[cfg_attr(feature = "runtime-asupersync", test)]
     async fn test_harness_send_and_receive() {
         let harness = TestHarness::new().await;
 

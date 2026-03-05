@@ -37,7 +37,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use crate::runtime::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use crate::runtime::net::{OwnedReadHalf, OwnedWriteHalf, UnixListener, UnixStream};
+use crate::runtime::net::{OwnedReadHalf, OwnedWriteHalf, UnixStream};
 use crate::runtime::sync::{broadcast, Mutex};
 use tracing::{debug, error, info, instrument, warn};
 
@@ -119,7 +119,7 @@ impl Server {
             std::fs::create_dir_all(parent).map_err(ServerError::Io)?;
         }
 
-        let listener = UnixListener::bind(&self.socket_path).map_err(ServerError::Bind)?;
+        let listener = crate::runtime::net::bind_unix_listener(&self.socket_path).await.map_err(ServerError::Bind)?;
         
         // Security: Set socket permissions to owner-only (0o700)
         #[cfg(unix)]
@@ -1072,6 +1072,11 @@ async fn handle_events(
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 // We missed some events - log but continue
                 warn!("Events subscriber lagged, missed {n} events");
+            }
+            #[cfg(feature = "runtime-asupersync")]
+            Err(broadcast::error::RecvError::Cancelled) => {
+                debug!("Events recv cancelled");
+                break;
             }
         }
     }
