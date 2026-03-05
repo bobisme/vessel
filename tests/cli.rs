@@ -82,7 +82,7 @@ fn test_help() {
         .arg("--help")
         .assert()
         .success()
-        .stdout(predicate::str::contains("PTY-based agent runtime"))
+        .stdout(predicate::str::contains("PTY-based runtime"))
         .stdout(predicate::str::contains("spawn"))
         .stdout(predicate::str::contains("list"))
         .stdout(predicate::str::contains("kill"));

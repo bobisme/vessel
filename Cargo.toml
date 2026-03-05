@@ -1,7 +1,18 @@
 [package]
-name = "vessel"
-version = "0.16.0"
+name = "vessel-pty"
+version = "0.17.0"
 edition = "2024"
+license = "MIT"
+description = "PTY-based runtime for orchestrating interactive terminal processes over Unix sockets"
+repository = "https://github.com/bobisme/vessel"
+
+[[bin]]
+name = "vessel"
+path = "src/main.rs"
+
+[lib]
+name = "vessel"
+path = "src/lib.rs"
 
 [dependencies]
 base64 = "0.22.1"
@@ -18,15 +29,26 @@ similar = { version = "2.6.0", features = ["text"] }
 strip-ansi-escapes = "0.2.1"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["full"], optional = true }
-asupersync = { git = "ssh://git@github.com/Dicklesworthstone/asupersync.git", rev = "449c317763ddf0b466795a564af4561ca09aad84", default-features = false, features = ["test-internals", "proc-macros"], optional = true }
+asupersync = { git = "ssh://git@github.com/Dicklesworthstone/asupersync.git", rev = "449c317763ddf0b466795a564af4561ca09aad84", default-features = false, features = [
+  "test-internals",
+  "proc-macros",
+], optional = true }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 vt100 = "0.16.2"
 
 # Optional: OTLP export (sync HTTP via reqwest-blocking)
 opentelemetry = { version = "0.31", optional = true }
-opentelemetry_sdk = { version = "0.31", optional = true, features = ["trace", "logs"] }
-opentelemetry-otlp = { version = "0.31", optional = true, default-features = false, features = ["trace", "logs", "http-proto", "reqwest-blocking-client"] }
+opentelemetry_sdk = { version = "0.31", optional = true, features = [
+  "trace",
+  "logs",
+] }
+opentelemetry-otlp = { version = "0.31", optional = true, default-features = false, features = [
+  "trace",
+  "logs",
+  "http-proto",
+  "reqwest-blocking-client",
+] }
 opentelemetry-appender-tracing = { version = "0.31", optional = true }
 tracing-opentelemetry = { version = "0.32", optional = true }
 
@@ -34,7 +56,13 @@ tracing-opentelemetry = { version = "0.32", optional = true }
 default = ["otel", "runtime-asupersync"]
 runtime-tokio = ["dep:tokio"]
 runtime-asupersync = ["dep:asupersync"]
-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-appender-tracing", "dep:tracing-opentelemetry"]
+otel = [
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry-appender-tracing",
+  "dep:tracing-opentelemetry",
+]
 
 [lints.rust]
 # Unsafe is confined to src/pty.rs and src/sys.rs which #![allow(unsafe_code)]
