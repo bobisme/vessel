@@ -1102,8 +1102,9 @@ async fn run_attach_bridge(
 
     loop {
         tokio::select! {
-            // Read input from client
-            result = reader.read(&mut input_buf), if !readonly => {
+            // Read input from client (always read to prevent buffer deadlock,
+            // but only forward to PTY in read-write mode)
+            result = reader.read(&mut input_buf) => {
                 match result {
                     Ok(0) => {
                         // Client disconnected - treat as detach
@@ -1111,22 +1112,25 @@ async fn run_attach_bridge(
                         return Ok(AttachEndReason::Detached);
                     }
                     Ok(n) => {
-                        // Get fd while holding lock to ensure it's valid
-                        let mgr = manager.lock().await;
-                        if let Some(agent) = mgr.get(agent_id) {
-                            let pty_fd = agent.pty.master_fd();
-                            let borrowed_fd = crate::sys::borrow_fd(pty_fd);
-                            if let Err(e) = nix::unistd::write(borrowed_fd, &input_buf[..n]) {
-                                warn!("Failed to write to PTY: {e}");
+                        if !readonly {
+                            // Get fd while holding lock to ensure it's valid
+                            let mgr = manager.lock().await;
+                            if let Some(agent) = mgr.get(agent_id) {
+                                let pty_fd = agent.pty.master_fd();
+                                let borrowed_fd = crate::sys::borrow_fd(pty_fd);
+                                if let Err(e) = nix::unistd::write(borrowed_fd, &input_buf[..n]) {
+                                    warn!("Failed to write to PTY: {e}");
+                                    return Ok(AttachEndReason::Error {
+                                        message: format!("PTY write error: {e}"),
+                                    });
+                                }
+                            } else {
                                 return Ok(AttachEndReason::Error {
-                                    message: format!("PTY write error: {e}"),
+                                    message: "agent no longer exists".to_string(),
                                 });
                             }
-                        } else {
-                            return Ok(AttachEndReason::Error {
-                                message: "agent no longer exists".to_string(),
-                            });
                         }
+                        // In readonly mode, discard input (drain buffer to prevent deadlock)
                     }
                     Err(e) => {
                         return Err(ServerError::Io(e));

@@ -330,13 +330,16 @@ async fn run_io_bridge(
     loop {
         tokio::select! {
             // Handle SIGWINCH (terminal resize)
-            _ = sigwinch.recv() => {
+            // Skip in readonly mode - the view manages sizing via botty resize,
+            // and sending resize requests from a readonly client can deadlock
+            // if the server doesn't drain the client's input.
+            _ = sigwinch.recv(), if !config.readonly => {
                 if let Some((rows, cols)) = get_terminal_size() {
                     // Only send resize if size actually changed
                     if current_size != Some((rows, cols)) {
                         current_size = Some((rows, cols));
                         debug!("Terminal resized to {}x{}, sending resize request", rows, cols);
-                        
+
                         // Send resize request to server
                         let request = Request::Resize {
                             id: config.agent_id.clone(),
