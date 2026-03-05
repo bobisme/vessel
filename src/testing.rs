@@ -423,110 +423,110 @@ impl AgentHandle {
 mod tests {
     use super::*;
 
-    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
-    #[cfg_attr(feature = "runtime-asupersync", test)]
-    async fn test_harness_spawn_and_snapshot() {
-        let harness = TestHarness::new().await;
+    crate::async_test! {
+        async fn test_harness_spawn_and_snapshot() {
+            let harness = TestHarness::new().await;
 
-        let agent = harness
-            .spawn(&["sh", "-c", "echo HARNESS_TEST; sleep 10"])
-            .await
-            .expect("spawn failed");
+            let agent = harness
+                .spawn(&["sh", "-c", "echo HARNESS_TEST; sleep 10"])
+                .await
+                .expect("spawn failed");
 
-        // Wait for output
-        let snapshot = agent
-            .wait_for_content("HARNESS_TEST", Duration::from_secs(5))
-            .await
-            .expect("wait failed");
+            // Wait for output
+            let snapshot = agent
+                .wait_for_content("HARNESS_TEST", Duration::from_secs(5))
+                .await
+                .expect("wait failed");
 
-        assert!(snapshot.contains("HARNESS_TEST"));
+            assert!(snapshot.contains("HARNESS_TEST"));
 
-        agent.kill().await.expect("kill failed");
-        harness.shutdown().await;
+            agent.kill().await.expect("kill failed");
+            harness.shutdown().await;
+        }
     }
 
-    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
-    #[cfg_attr(feature = "runtime-asupersync", test)]
-    async fn test_harness_wait_for_stable() {
-        let harness = TestHarness::new().await;
+    crate::async_test! {
+        async fn test_harness_wait_for_stable() {
+            let harness = TestHarness::new().await;
 
-        // Spawn something that produces output then stops
-        let agent = harness
-            .spawn(&["sh", "-c", "echo LINE1; echo LINE2; sleep 10"])
-            .await
-            .expect("spawn failed");
+            // Spawn something that produces output then stops
+            let agent = harness
+                .spawn(&["sh", "-c", "echo LINE1; echo LINE2; sleep 10"])
+                .await
+                .expect("spawn failed");
 
-        // Wait for screen to stabilize
-        let snapshot = agent
-            .wait_for_stable(Duration::from_millis(200), Duration::from_secs(5))
-            .await
-            .expect("wait failed");
+            // Wait for screen to stabilize
+            let snapshot = agent
+                .wait_for_stable(Duration::from_millis(200), Duration::from_secs(5))
+                .await
+                .expect("wait failed");
 
-        assert!(snapshot.contains("LINE1"));
-        assert!(snapshot.contains("LINE2"));
+            assert!(snapshot.contains("LINE1"));
+            assert!(snapshot.contains("LINE2"));
 
-        agent.kill().await.expect("kill failed");
-        harness.shutdown().await;
+            agent.kill().await.expect("kill failed");
+            harness.shutdown().await;
+        }
     }
 
-    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
-    #[cfg_attr(feature = "runtime-asupersync", test)]
-    async fn test_harness_multiple_agents() {
-        let harness = TestHarness::new().await;
+    crate::async_test! {
+        async fn test_harness_multiple_agents() {
+            let harness = TestHarness::new().await;
 
-        // Spawn two agents
-        let agent1 = harness
-            .spawn(&["sh", "-c", "echo AGENT_ONE; sleep 10"])
-            .await
-            .expect("spawn 1 failed");
+            // Spawn two agents
+            let agent1 = harness
+                .spawn(&["sh", "-c", "echo AGENT_ONE; sleep 10"])
+                .await
+                .expect("spawn 1 failed");
 
-        let agent2 = harness
-            .spawn(&["sh", "-c", "echo AGENT_TWO; sleep 10"])
-            .await
-            .expect("spawn 2 failed");
+            let agent2 = harness
+                .spawn(&["sh", "-c", "echo AGENT_TWO; sleep 10"])
+                .await
+                .expect("spawn 2 failed");
 
-        // Wait for both
-        agent1
-            .wait_for_content("AGENT_ONE", Duration::from_secs(5))
-            .await
-            .expect("wait 1 failed");
+            // Wait for both
+            agent1
+                .wait_for_content("AGENT_ONE", Duration::from_secs(5))
+                .await
+                .expect("wait 1 failed");
 
-        agent2
-            .wait_for_content("AGENT_TWO", Duration::from_secs(5))
-            .await
-            .expect("wait 2 failed");
+            agent2
+                .wait_for_content("AGENT_TWO", Duration::from_secs(5))
+                .await
+                .expect("wait 2 failed");
 
-        // Verify list shows both
-        let agents = harness.list().await.expect("list failed");
-        assert_eq!(agents.len(), 2);
+            // Verify list shows both
+            let agents = harness.list().await.expect("list failed");
+            assert_eq!(agents.len(), 2);
 
-        agent1.kill().await.ok();
-        agent2.kill().await.ok();
-        harness.shutdown().await;
+            agent1.kill().await.ok();
+            agent2.kill().await.ok();
+            harness.shutdown().await;
+        }
     }
 
-    #[cfg_attr(feature = "runtime-tokio", tokio::test)]
-    #[cfg_attr(feature = "runtime-asupersync", test)]
-    async fn test_harness_send_and_receive() {
-        let harness = TestHarness::new().await;
+    crate::async_test! {
+        async fn test_harness_send_and_receive() {
+            let harness = TestHarness::new().await;
 
-        let agent = harness.spawn(&["bash"]).await.expect("spawn failed");
+            let agent = harness.spawn(&["bash"]).await.expect("spawn failed");
 
-        // Wait for prompt
-        crate::runtime::time::sleep(Duration::from_millis(200)).await;
+            // Wait for prompt
+            crate::runtime::time::sleep(Duration::from_millis(200)).await;
 
-        // Send command
-        agent.send("echo INTERACTIVE_TEST").await.expect("send failed");
+            // Send command
+            agent.send("echo INTERACTIVE_TEST").await.expect("send failed");
 
-        // Wait for output
-        let snapshot = agent
-            .wait_for_content("INTERACTIVE_TEST", Duration::from_secs(5))
-            .await
-            .expect("wait failed");
+            // Wait for output
+            let snapshot = agent
+                .wait_for_content("INTERACTIVE_TEST", Duration::from_secs(5))
+                .await
+                .expect("wait failed");
 
-        assert!(snapshot.contains("INTERACTIVE_TEST"));
+            assert!(snapshot.contains("INTERACTIVE_TEST"));
 
-        agent.kill().await.ok();
-        harness.shutdown().await;
+            agent.kill().await.ok();
+            harness.shutdown().await;
+        }
     }
 }

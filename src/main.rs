@@ -218,8 +218,11 @@ fn main() {
         .build()
         .expect("failed to build asupersync runtime");
     let handle = rt.handle();
-    botty::runtime::task::set_runtime_handle(handle);
-    rt.block_on(main_inner());
+    botty::runtime::task::set_runtime_handle(handle.clone());
+    // Spawn main_inner as a task so it runs inside the scheduler with a Cx.
+    // block_on alone doesn't set up CURRENT_CX, so Cx::current() would return None.
+    let join = handle.spawn(main_inner());
+    rt.block_on(join);
 }
 
 async fn main_inner() {

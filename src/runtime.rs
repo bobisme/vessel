@@ -323,11 +323,27 @@ pub mod task {
     /// Store the runtime handle for later spawn() calls.
     /// Must be called once during startup (from block_on context).
     pub fn set_runtime_handle(handle: asupersync::runtime::RuntimeHandle) {
-        RUNTIME_HANDLE.set(handle).unwrap_or_else(|_| panic!("runtime handle already set"));
+        // In tests, the handle may already be set by a previous test.
+        let _ = RUNTIME_HANDLE.set(handle);
     }
 
     fn handle() -> &'static asupersync::runtime::RuntimeHandle {
         RUNTIME_HANDLE.get().expect("runtime handle not set — call set_runtime_handle first")
+    }
+
+    /// Run an async future on a fresh asupersync runtime.
+    /// Used for tests and any context that needs a one-shot runtime.
+    pub fn block_on<F: std::future::Future + Send + 'static>(f: F) -> F::Output
+    where
+        F::Output: Send + 'static,
+    {
+        let rt = asupersync::runtime::RuntimeBuilder::new()
+            .build()
+            .expect("failed to build runtime");
+        let h = rt.handle();
+        set_runtime_handle(h.clone());
+        let join = h.spawn(f);
+        rt.block_on(join)
     }
 
     /// Spawn a future onto the runtime.
@@ -587,4 +603,29 @@ pub(crate) mod select_either {
             }
         }
     }
+}
+
+/// Macro for async test functions that works with both runtime backends.
+///
+/// Usage:
+/// ```ignore
+/// crate::runtime::async_test! {
+///     async fn test_something() {
+///         // async test body
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! async_test {
+    (async fn $name:ident() $body:block) => {
+        #[cfg(feature = "runtime-tokio")]
+        #[tokio::test]
+        async fn $name() $body
+
+        #[cfg(feature = "runtime-asupersync")]
+        #[test]
+        fn $name() {
+            $crate::runtime::task::block_on(async $body)
+        }
+    };
 }
