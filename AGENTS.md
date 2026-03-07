@@ -1,7 +1,7 @@
 # vessel
 
 Project type: cli
-Tools: `beads`, `maw`, `crit`, `botbus`, `vessel`
+Tools: `bones`, `maw`, `seal`, `rite`, `vessel`
 Reviewer roles: security
 
 ## What This Project Is
