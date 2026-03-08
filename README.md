@@ -20,16 +20,8 @@ It is designed for AI orchestrators, test harnesses, and automation systems that
 
 ## Install
 
-From this repository:
-
 ```bash
-cargo install --locked --path .
-```
-
-From git tag:
-
-```bash
-cargo install --locked --git https://github.com/bobisme/vessel --tag v0.12.1
+cargo install vessel-pty
 ```
 
 ## Quick start (2 minutes)
