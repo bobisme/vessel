@@ -29,7 +29,7 @@ similar = { version = "2.6.0", features = ["text"] }
 strip-ansi-escapes = "0.2.1"
 thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["full"], optional = true }
-asupersync = { git = "ssh://git@github.com/Dicklesworthstone/asupersync.git", rev = "449c317763ddf0b466795a564af4561ca09aad84", default-features = false, features = [
+asupersync = { version = "0.2.9", default-features = false, features = [
   "test-internals",
   "proc-macros",
 ], optional = true }

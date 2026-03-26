@@ -466,8 +466,9 @@ macro_rules! select {
         let fut1 = $crate::runtime::select_arm!($f1 $(, $g1)?);
         let fut2 = $crate::runtime::select_arm!($f2 $(, $g2)?);
         match Select::new(Box::pin(fut1), Box::pin(fut2)).await {
-            Either::Left($p1) => $b1
-            Either::Right($p2) => $b2
+            Ok(Either::Left($p1)) => $b1
+            Ok(Either::Right($p2)) => $b2
+            Err(_) => unreachable!("select future polled after completion"),
         }
     }};
 
@@ -485,9 +486,10 @@ macro_rules! select {
             Box::pin(fut1),
             Box::pin(Select::new(Box::pin(fut2), Box::pin(fut3))),
         ).await {
-            Either::Left($p1) => $b1
-            Either::Right(Either::Left($p2)) => $b2
-            Either::Right(Either::Right($p3)) => $b3
+            Ok(Either::Left($p1)) => $b1
+            Ok(Either::Right(Ok(Either::Left($p2)))) => $b2
+            Ok(Either::Right(Ok(Either::Right($p3)))) => $b3
+            _ => unreachable!("select future polled after completion"),
         }
     }};
 
@@ -507,10 +509,11 @@ macro_rules! select {
             Box::pin(Select::new(Box::pin(fut1), Box::pin(fut2))),
             Box::pin(Select::new(Box::pin(fut3), Box::pin(fut4))),
         ).await {
-            Either::Left(Either::Left($p1)) => $b1
-            Either::Left(Either::Right($p2)) => $b2
-            Either::Right(Either::Left($p3)) => $b3
-            Either::Right(Either::Right($p4)) => $b4
+            Ok(Either::Left(Ok(Either::Left($p1)))) => $b1
+            Ok(Either::Left(Ok(Either::Right($p2)))) => $b2
+            Ok(Either::Right(Ok(Either::Left($p3)))) => $b3
+            Ok(Either::Right(Ok(Either::Right($p4)))) => $b4
+            _ => unreachable!("select future polled after completion"),
         }
     }};
 
@@ -535,11 +538,12 @@ macro_rules! select {
                 Box::pin(Select::new(Box::pin(fut4), Box::pin(fut5))),
             )),
         ).await {
-            Either::Left(Either::Left($p1)) => $b1
-            Either::Left(Either::Right($p2)) => $b2
-            Either::Right(Either::Left($p3)) => $b3
-            Either::Right(Either::Right(Either::Left($p4))) => $b4
-            Either::Right(Either::Right(Either::Right($p5))) => $b5
+            Ok(Either::Left(Ok(Either::Left($p1)))) => $b1
+            Ok(Either::Left(Ok(Either::Right($p2)))) => $b2
+            Ok(Either::Right(Ok(Either::Left($p3)))) => $b3
+            Ok(Either::Right(Ok(Either::Right(Ok(Either::Left($p4)))))) => $b4
+            Ok(Either::Right(Ok(Either::Right(Ok(Either::Right($p5)))))) => $b5
+            _ => unreachable!("select future polled after completion"),
         }
     }};
 }

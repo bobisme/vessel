@@ -1078,6 +1078,11 @@ async fn handle_events(
                 debug!("Events recv cancelled");
                 break;
             }
+            #[cfg(feature = "runtime-asupersync")]
+            Err(broadcast::error::RecvError::PolledAfterCompletion) => {
+                debug!("Events recv polled after completion");
+                break;
+            }
         }
     }
 
