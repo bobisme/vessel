@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.17.2] - 2026-04-15
+
+### Added
+- `vessel wait --exited --any` to return as soon as any listed agent exits and print which agent IDs had exited when the wait completed
+
 ## [0.17.1] - 2026-03-26
 
 ### Changed
