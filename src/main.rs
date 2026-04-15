@@ -1205,6 +1205,7 @@ async fn run_client(
         Command::Wait {
             id: ids,
             exited,
+            any,
             contains,
             pattern,
             stable,
@@ -1228,6 +1229,9 @@ async fn run_client(
             let has_screen_conditions = contains.is_some() || pattern.is_some() || stable.is_some();
             if ids.len() > 1 && !exited {
                 return Err("multiple agent IDs require --exited".into());
+            }
+            if any && !exited {
+                return Err("--any requires --exited".into());
             }
             if ids.len() > 1 && (has_screen_conditions || print) {
                 return Err("--contains, --pattern, --stable, and --print require a single agent ID".into());
@@ -1265,7 +1269,7 @@ async fn run_client(
                     }
                 }
 
-                if !pending.is_empty() {
+                if !(any && !exit_codes.is_empty()) && !pending.is_empty() {
                     // Subscribe to events and wait for remaining agents
                     let stream = UnixStream::connect(&socket_path_ref).await?;
                     let (reader, mut writer) = stream.into_split();
@@ -1311,6 +1315,9 @@ async fn run_client(
                                     Response::Event(Event::AgentExited { ref id, exit_code }) if pending.contains(id) => {
                                         exit_codes.insert(id.clone(), exit_code);
                                         pending.remove(id);
+                                        if any {
+                                            break;
+                                        }
                                     }
                                     Response::Error { message } => return Err(message.into()),
                                     _ => {} // Other events, keep waiting
@@ -1319,6 +1326,31 @@ async fn run_client(
                             Err(e) => return Err(format!("read error: {e}").into()),
                         }
                         line.clear();
+                    }
+                }
+
+                if any && !pending.is_empty() {
+                    let response = client.request(Request::List { labels: vec![] }).await?;
+                    let agents = match response {
+                        Response::Agents { agents } => agents,
+                        Response::Error { message } => return Err(message.into()),
+                        _ => return Err("unexpected response".into()),
+                    };
+
+                    for id in &ids {
+                        if !pending.contains(id) {
+                            continue;
+                        }
+
+                        let agent = agents.iter().find(|a| a.id == *id);
+                        match agent {
+                            Some(a) if a.state == vessel::AgentState::Exited => {
+                                exit_codes.insert(id.clone(), a.exit_code);
+                                pending.remove(id);
+                            }
+                            Some(_) => {}
+                            None => return Err(format!("agent not found: {id}").into()),
+                        }
                     }
                 }
 
@@ -1360,6 +1392,12 @@ async fn run_client(
                         if print {
                             println!("{snapshot}");
                         }
+                    }
+                }
+
+                if any && ids.len() > 1 {
+                    for id in ids.iter().filter(|id| exit_codes.contains_key(*id)) {
+                        println!("{id}");
                     }
                 }
 

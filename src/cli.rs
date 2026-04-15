@@ -68,30 +68,30 @@ pub fn parse_key_sequence(s: &str) -> Option<Vec<u8>> {
     // Multi-byte ANSI escape sequences
     match s.as_str() {
         // Arrow keys (ESC [ X)
-        "up" => Some(vec![0x1b, 0x5b, 0x41]),       // ESC [ A
-        "down" => Some(vec![0x1b, 0x5b, 0x42]),     // ESC [ B
-        "right" => Some(vec![0x1b, 0x5b, 0x43]),    // ESC [ C
-        "left" => Some(vec![0x1b, 0x5b, 0x44]),     // ESC [ D
+        "up" => Some(vec![0x1b, 0x5b, 0x41]),    // ESC [ A
+        "down" => Some(vec![0x1b, 0x5b, 0x42]),  // ESC [ B
+        "right" => Some(vec![0x1b, 0x5b, 0x43]), // ESC [ C
+        "left" => Some(vec![0x1b, 0x5b, 0x44]),  // ESC [ D
 
         // Special keys
-        "enter" => Some(vec![0x0d]),                // CR
-        "return" => Some(vec![0x0d]),               // Alias for enter
-        "tab" => Some(vec![0x09]),                  // HT
-        "escape" | "esc" => Some(vec![0x1b]),       // ESC
-        "backspace" => Some(vec![0x7f]),            // DEL
+        "enter" => Some(vec![0x0d]),                            // CR
+        "return" => Some(vec![0x0d]),                           // Alias for enter
+        "tab" => Some(vec![0x09]),                              // HT
+        "escape" | "esc" => Some(vec![0x1b]),                   // ESC
+        "backspace" => Some(vec![0x7f]),                        // DEL
         "delete" | "del" => Some(vec![0x1b, 0x5b, 0x33, 0x7e]), // ESC [ 3 ~
 
         // Navigation keys
-        "home" => Some(vec![0x1b, 0x5b, 0x48]),     // ESC [ H
-        "end" => Some(vec![0x1b, 0x5b, 0x46]),      // ESC [ F
+        "home" => Some(vec![0x1b, 0x5b, 0x48]), // ESC [ H
+        "end" => Some(vec![0x1b, 0x5b, 0x46]),  // ESC [ F
         "pageup" | "pgup" => Some(vec![0x1b, 0x5b, 0x35, 0x7e]), // ESC [ 5 ~
         "pagedown" | "pgdn" | "pgdown" => Some(vec![0x1b, 0x5b, 0x36, 0x7e]), // ESC [ 6 ~
 
         // Function keys (commonly used)
-        "f1" => Some(vec![0x1b, 0x4f, 0x50]),       // ESC O P
-        "f2" => Some(vec![0x1b, 0x4f, 0x51]),       // ESC O Q
-        "f3" => Some(vec![0x1b, 0x4f, 0x52]),       // ESC O R
-        "f4" => Some(vec![0x1b, 0x4f, 0x53]),       // ESC O S
+        "f1" => Some(vec![0x1b, 0x4f, 0x50]), // ESC O P
+        "f2" => Some(vec![0x1b, 0x4f, 0x51]), // ESC O Q
+        "f3" => Some(vec![0x1b, 0x4f, 0x52]), // ESC O R
+        "f4" => Some(vec![0x1b, 0x4f, 0x53]), // ESC O S
 
         _ => None,
     }
@@ -440,6 +440,10 @@ SUBAGENT WORKFLOW:
 
     vessel wait --exited worker-1 worker-2 worker-3
 
+  Return when any listed agent exits:
+
+    vessel wait --exited --any worker-1 worker-2 worker-3
+
   Combined with output conditions (single agent only):
 
     vessel wait --exited --contains 'done' --print my-agent")]
@@ -450,6 +454,10 @@ SUBAGENT WORKFLOW:
         /// Wait until the agent has exited.
         #[arg(long)]
         exited: bool,
+
+        /// Return when any listed agent exits instead of waiting for all.
+        #[arg(long)]
+        any: bool,
 
         /// Wait until output contains this string.
         #[arg(long)]
@@ -716,16 +724,28 @@ mod tests {
         assert_eq!(parse_key_sequence("escape"), Some(vec![0x1b]));
         assert_eq!(parse_key_sequence("esc"), Some(vec![0x1b]));
         assert_eq!(parse_key_sequence("backspace"), Some(vec![0x7f]));
-        assert_eq!(parse_key_sequence("delete"), Some(vec![0x1b, 0x5b, 0x33, 0x7e]));
+        assert_eq!(
+            parse_key_sequence("delete"),
+            Some(vec![0x1b, 0x5b, 0x33, 0x7e])
+        );
     }
 
     #[test]
     fn test_parse_key_sequence_navigation() {
         assert_eq!(parse_key_sequence("home"), Some(vec![0x1b, 0x5b, 0x48]));
         assert_eq!(parse_key_sequence("end"), Some(vec![0x1b, 0x5b, 0x46]));
-        assert_eq!(parse_key_sequence("pageup"), Some(vec![0x1b, 0x5b, 0x35, 0x7e]));
-        assert_eq!(parse_key_sequence("pagedown"), Some(vec![0x1b, 0x5b, 0x36, 0x7e]));
-        assert_eq!(parse_key_sequence("pgup"), Some(vec![0x1b, 0x5b, 0x35, 0x7e]));
+        assert_eq!(
+            parse_key_sequence("pageup"),
+            Some(vec![0x1b, 0x5b, 0x35, 0x7e])
+        );
+        assert_eq!(
+            parse_key_sequence("pagedown"),
+            Some(vec![0x1b, 0x5b, 0x36, 0x7e])
+        );
+        assert_eq!(
+            parse_key_sequence("pgup"),
+            Some(vec![0x1b, 0x5b, 0x35, 0x7e])
+        );
     }
 
     #[test]

@@ -170,7 +170,12 @@ fn test_send_and_snapshot() {
 
     // Send a command
     env.vessel()
-        .args(["send", &agent_id, "echo UNIQUE_TEST_STRING_12345", "--newline"])
+        .args([
+            "send",
+            &agent_id,
+            "echo UNIQUE_TEST_STRING_12345",
+            "--newline",
+        ])
         .assert()
         .success();
 
@@ -409,7 +414,10 @@ fn test_spawn_duplicate_name_fails() {
         .stderr(predicate::str::contains("already in use"));
 
     // Clean up
-    env.vessel().args(["kill", "unique-name"]).assert().success();
+    env.vessel()
+        .args(["kill", "unique-name"])
+        .assert()
+        .success();
 }
 
 #[test]
@@ -478,10 +486,7 @@ fn test_kill_idempotent() {
         .success();
 
     // Kill --all with no agents should also succeed
-    env.vessel()
-        .args(["kill", "--all"])
-        .assert()
-        .success();
+    env.vessel().args(["kill", "--all"]).assert().success();
 
     // Spawn an agent, kill it, then kill it again (should be idempotent)
     let output = env
@@ -499,10 +504,7 @@ fn test_kill_idempotent() {
     std::thread::sleep(Duration::from_millis(100));
 
     // Second kill should also succeed (idempotent)
-    env.vessel()
-        .args(["kill", &agent_id])
-        .assert()
-        .success();
+    env.vessel().args(["kill", &agent_id]).assert().success();
 }
 
 #[test]
@@ -634,7 +636,15 @@ fn test_wait_exited() {
     // Spawn a short-lived command that exits 0
     let output = env
         .vessel()
-        .args(["spawn", "--name", "exit-ok", "--", "sh", "-c", "echo hello; exit 0"])
+        .args([
+            "spawn",
+            "--name",
+            "exit-ok",
+            "--",
+            "sh",
+            "-c",
+            "echo hello; exit 0",
+        ])
         .output()
         .expect("failed to run spawn");
     assert!(output.status.success());
@@ -716,6 +726,108 @@ fn test_wait_exited_timeout() {
     env.vessel().args(["kill", "long-run"]).assert().success();
 }
 
+#[test]
+fn test_wait_exited_any_returns_first_exit_and_prints_id() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    env.vessel()
+        .args([
+            "spawn",
+            "--name",
+            "fast-exit",
+            "--",
+            "sh",
+            "-c",
+            "sleep 0.2; exit 0",
+        ])
+        .assert()
+        .success();
+
+    env.vessel()
+        .args(["spawn", "--name", "slow-exit", "--", "sleep", "999"])
+        .assert()
+        .success();
+
+    env.vessel()
+        .args([
+            "wait",
+            "--exited",
+            "--any",
+            "fast-exit",
+            "slow-exit",
+            "--timeout",
+            "10",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("fast-exit\n"));
+
+    env.vessel().args(["kill", "slow-exit"]).assert().success();
+}
+
+#[test]
+fn test_wait_exited_any_reports_all_already_exited_agents() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    env.vessel()
+        .args(["spawn", "--name", "done-ok", "--", "true"])
+        .assert()
+        .success();
+
+    env.vessel()
+        .args(["spawn", "--name", "done-bad", "--", "sh", "-c", "exit 7"])
+        .assert()
+        .success();
+
+    std::thread::sleep(Duration::from_millis(500));
+
+    env.vessel()
+        .args([
+            "wait",
+            "--exited",
+            "--any",
+            "done-ok",
+            "done-bad",
+            "--timeout",
+            "5",
+        ])
+        .assert()
+        .failure()
+        .code(7)
+        .stdout(predicate::str::diff("done-ok\ndone-bad\n"));
+}
+
+#[test]
+fn test_wait_any_requires_exited() {
+    let mut env = TestEnv::new();
+    env.start_server();
+
+    env.vessel()
+        .args([
+            "spawn",
+            "--name",
+            "wait-any-no-exited",
+            "--",
+            "sleep",
+            "999",
+        ])
+        .assert()
+        .success();
+
+    env.vessel()
+        .args(["wait", "--any", "wait-any-no-exited", "--timeout", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--any requires --exited"));
+
+    env.vessel()
+        .args(["kill", "wait-any-no-exited"])
+        .assert()
+        .success();
+}
+
 // ============================================================================
 // Slash in agent name tests
 // ============================================================================
@@ -774,7 +886,9 @@ fn test_spawn_slash_name_invalid() {
         .args(["spawn", "--name", "a//b", "--", "sleep", "30"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("must not start/end with '/' or contain '//'"));
+        .stderr(predicate::str::contains(
+            "must not start/end with '/' or contain '//'",
+        ));
 }
 
 #[test]
@@ -795,10 +909,7 @@ fn test_spawn_multi_level_slash() {
 
     // Snapshot should work with slash names
     std::thread::sleep(Duration::from_millis(200));
-    env.vessel()
-        .args(["snapshot", "a/b/c"])
-        .assert()
-        .success();
+    env.vessel().args(["snapshot", "a/b/c"]).assert().success();
 
     // Clean up
     env.vessel().args(["kill", "a/b/c"]).assert().success();
