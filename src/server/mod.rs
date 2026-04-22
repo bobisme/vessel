@@ -119,9 +119,21 @@ impl Server {
             std::fs::create_dir_all(parent).map_err(ServerError::Io)?;
         }
 
-        let listener = crate::runtime::net::bind_unix_listener(&self.socket_path).await.map_err(ServerError::Bind)?;
-        
-        // Security: Set socket permissions to owner-only (0o700)
+        // Security: bind under a restrictive umask so the socket inode is
+        // created owner-only atomically. Without this, the file exists with
+        // the process's default umask-derived mode (often 0o644/0o664) for a
+        // brief window before the set_permissions call below — enough time
+        // for a local user on a multi-user parent dir (e.g. the
+        // /tmp/vessel-$UID.sock fallback) to connect() and drive the server.
+        let listener = {
+            #[cfg(unix)]
+            let _umask_guard = UmaskGuard::new(0o177);
+            crate::runtime::net::bind_unix_listener(&self.socket_path).await.map_err(ServerError::Bind)?
+        };
+
+        // Belt-and-suspenders: ensure mode is 0o600 regardless of how the
+        // runtime created the inode. The umask above should already make
+        // this a no-op.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1369,4 +1381,30 @@ fn get_process_tree_rss(pid: u32) -> Option<u64> {
 /// Check if a server is running by trying to connect.
 pub async fn is_server_running(socket_path: &Path) -> bool {
     UnixStream::connect(socket_path).await.is_ok()
+}
+
+/// RAII guard that sets a process-wide umask and restores the previous value
+/// on drop. Used to bracket a single syscall that creates an inode (bind,
+/// open, mkdir) so its mode is not subject to the ambient umask.
+///
+/// Note: `umask(2)` is process-global, not thread-local. Callers must ensure
+/// no other thread in the process is creating files inside the guard's
+/// lifetime. In this server it is used once during startup before any PTY
+/// task is spawned.
+#[cfg(unix)]
+struct UmaskGuard(nix::sys::stat::Mode);
+
+#[cfg(unix)]
+impl UmaskGuard {
+    fn new(mask: libc::mode_t) -> Self {
+        let mode = nix::sys::stat::Mode::from_bits_truncate(mask);
+        Self(nix::sys::stat::umask(mode))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        nix::sys::stat::umask(self.0);
+    }
 }
