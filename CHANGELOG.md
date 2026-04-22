@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.3] - 2026-04-22
+
+### Security
+- Bind the Unix control socket under a restrictive umask (`0o177`) so the inode
+  is created owner-only atomically. Closes a race window between `bind()` and
+  the subsequent `set_permissions(0o600)` call during which a local user on a
+  multi-user parent directory (notably the `/tmp/vessel-$UID.sock` fallback)
+  could `connect()` and drive the server with unauthenticated `Spawn`
+  requests. The existing `set_permissions` call is retained as a
+  belt-and-suspenders safeguard.
+
 ## [0.17.2] - 2026-04-15
 
 ### Added
