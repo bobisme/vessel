@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.4] - 2026-06-19
+
+### Fixed
+- Build failure on macOS/BSD: cast `TIOCSCTTY` to the `c_ulong` type that
+  `libc::ioctl` expects (it is `c_uint` there), fixing an `E0308` mismatched
+  types error in `src/pty.rs`. Linux was unaffected.
+
+### Added
+- `send-keys` now accepts the `space` key name (sends a literal space byte,
+  `0x20`). Previously there was no way to send a space, since a bare `" "`
+  argument is trimmed away during key parsing.
+
 ## [0.17.3] - 2026-04-22
 
 ### Security
