@@ -240,7 +240,10 @@ pub fn spawn_with_env(
 
             // Set the slave as the controlling terminal
             unsafe {
-                if libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY, 0) < 0 {
+                // Cast the request constant to the type ioctl() expects. On
+                // macOS/BSD that param is c_ulong while TIOCSCTTY is c_uint, so
+                // an explicit `as _` keeps this portable (no-op on Linux).
+                if libc::ioctl(slave.as_raw_fd(), libc::TIOCSCTTY as _, 0) < 0 {
                     libc::_exit(1);
                 }
             }
