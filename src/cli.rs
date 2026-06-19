@@ -50,7 +50,7 @@ pub fn parse_key_notation(s: &str) -> Option<u8> {
 ///
 /// Supported keys:
 /// - Arrow keys: `up`, `down`, `left`, `right`
-/// - Special keys: `enter`, `tab`, `escape`, `backspace`, `delete`
+/// - Special keys: `enter`, `tab`, `escape`, `backspace`, `delete`, `space`
 /// - Navigation: `home`, `end`, `pageup`, `pagedown`
 /// - Control sequences: `ctrl-c`, `ctrl-d`, etc.
 /// - Single characters: `a`, `b`, `x`, etc.
@@ -80,6 +80,7 @@ pub fn parse_key_sequence(s: &str) -> Option<Vec<u8>> {
         "escape" | "esc" => Some(vec![0x1b]),                   // ESC
         "backspace" => Some(vec![0x7f]),                        // DEL
         "delete" | "del" => Some(vec![0x1b, 0x5b, 0x33, 0x7e]), // ESC [ 3 ~
+        "space" => Some(vec![0x20]),                            // SP (literal space byte)
 
         // Navigation keys
         "home" => Some(vec![0x1b, 0x5b, 0x48]), // ESC [ H
@@ -330,7 +331,7 @@ pub enum Command {
         ///
         /// Supported keys:
         /// - Arrow keys: up, down, left, right
-        /// - Special: enter, tab, escape, backspace, delete
+        /// - Special: enter, tab, escape, backspace, delete, space
         /// - Navigation: home, end, pageup, pagedown
         /// - Control: ctrl-c, ctrl-d, etc.
         /// - Function: f1, f2, f3, f4
@@ -728,6 +729,11 @@ mod tests {
             parse_key_sequence("delete"),
             Some(vec![0x1b, 0x5b, 0x33, 0x7e])
         );
+        // "space" sends a literal space byte; a bare " " arg is trimmed away,
+        // so the named key is the only way to send space via send-keys.
+        assert_eq!(parse_key_sequence("space"), Some(vec![0x20]));
+        assert_eq!(parse_key_sequence("SPACE"), Some(vec![0x20]));
+        assert_eq!(parse_key_sequence(" space "), Some(vec![0x20]));
     }
 
     #[test]
