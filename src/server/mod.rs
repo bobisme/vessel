@@ -4,7 +4,7 @@
 //! Listens on a Unix socket for client requests.
 
 // These casts are intentional and safe:
-// - PIDs are always positive (i32 -> u32)  
+// - PIDs are always positive (i32 -> u32)
 // - Timestamps won't overflow u64 until year 584942417355
 #![allow(clippy::cast_sign_loss)]
 #![allow(clippy::cast_possible_truncation)]
@@ -26,9 +26,13 @@ pub use screen::Screen;
 pub use transcript::Transcript;
 
 use crate::protocol::{
-    AgentInfo, AgentState, AttachEndReason, DumpFormat, Event, ExitReason, Request, Response, TranscriptEntry,
+    AgentInfo, AgentState, AttachEndReason, DumpFormat, Event, ExitReason, Request, Response,
+    TranscriptEntry,
 };
 use crate::pty;
+use crate::runtime::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use crate::runtime::net::{OwnedReadHalf, OwnedWriteHalf, UnixStream};
+use crate::runtime::sync::{Mutex, broadcast};
 use nix::sys::signal::Signal;
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
@@ -36,9 +40,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use crate::runtime::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use crate::runtime::net::{OwnedReadHalf, OwnedWriteHalf, UnixStream};
-use crate::runtime::sync::{broadcast, Mutex};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Errors that can occur in the server.
@@ -74,7 +75,7 @@ pub struct Server {
 
 impl Server {
     /// Create a new server that will listen on the given socket path.
-    #[must_use] 
+    #[must_use]
     pub fn new(socket_path: PathBuf) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         // Event channel with enough capacity for bursty output
@@ -93,8 +94,7 @@ impl Server {
         // Security: Check for symlink attack before removing existing socket
         if self.socket_path.exists() {
             // Don't follow symlinks - check if it's actually a symlink
-            let metadata = std::fs::symlink_metadata(&self.socket_path)
-                .map_err(ServerError::Io)?;
+            let metadata = std::fs::symlink_metadata(&self.socket_path).map_err(ServerError::Io)?;
 
             if metadata.file_type().is_symlink() {
                 return Err(ServerError::Bind(std::io::Error::other(
@@ -128,7 +128,9 @@ impl Server {
         let listener = {
             #[cfg(unix)]
             let _umask_guard = UmaskGuard::new(0o177);
-            crate::runtime::net::bind_unix_listener(&self.socket_path).await.map_err(ServerError::Bind)?
+            crate::runtime::net::bind_unix_listener(&self.socket_path)
+                .await
+                .map_err(ServerError::Bind)?
         };
 
         // Belt-and-suspenders: ensure mode is 0o600 regardless of how the
@@ -140,7 +142,7 @@ impl Server {
             let perms = std::fs::Permissions::from_mode(0o600);
             std::fs::set_permissions(&self.socket_path, perms).map_err(ServerError::Io)?;
         }
-        
+
         info!("Server listening on {:?}", self.socket_path);
 
         // Start the PTY output reader task
@@ -158,15 +160,15 @@ impl Server {
 
         // Set up OS signal handlers so the server shuts down gracefully
         // instead of dying instantly (which orphans/kills all agents).
-        let mut sigterm = crate::runtime::signal::signal(
-            crate::runtime::signal::SignalKind::terminate(),
-        ).map_err(ServerError::Io)?;
-        let mut sigint = crate::runtime::signal::signal(
-            crate::runtime::signal::SignalKind::interrupt(),
-        ).map_err(ServerError::Io)?;
-        let mut sighup = crate::runtime::signal::signal(
-            crate::runtime::signal::SignalKind::hangup(),
-        ).map_err(ServerError::Io)?;
+        let mut sigterm =
+            crate::runtime::signal::signal(crate::runtime::signal::SignalKind::terminate())
+                .map_err(ServerError::Io)?;
+        let mut sigint =
+            crate::runtime::signal::signal(crate::runtime::signal::SignalKind::interrupt())
+                .map_err(ServerError::Io)?;
+        let mut sighup =
+            crate::runtime::signal::signal(crate::runtime::signal::SignalKind::hangup())
+                .map_err(ServerError::Io)?;
 
         loop {
             crate::runtime::select! {
@@ -236,7 +238,8 @@ impl Server {
         // Gracefully shut down running agents: SIGTERM → wait → SIGKILL
         {
             let mgr = self.manager.lock().await;
-            let running: Vec<String> = mgr.list()
+            let running: Vec<String> = mgr
+                .list()
                 .filter(|a| a.is_running())
                 .map(|a| a.id.clone())
                 .collect();
@@ -255,8 +258,9 @@ impl Server {
                 loop {
                     crate::runtime::time::sleep(Duration::from_millis(100)).await;
                     let mgr = self.manager.lock().await;
-                    let still_running = running.iter()
-                        .filter(|id| mgr.get(id).map_or(false, |a| a.is_running()))
+                    let still_running = running
+                        .iter()
+                        .filter(|id| mgr.get(id).is_some_and(agent::Agent::is_running))
                         .count();
                     drop(mgr);
 
@@ -265,13 +269,16 @@ impl Server {
                         break;
                     }
                     if crate::runtime::time::Instant::now() >= deadline {
-                        warn!("{} agent(s) did not exit in time, sending SIGKILL", still_running);
+                        warn!(
+                            "{} agent(s) did not exit in time, sending SIGKILL",
+                            still_running
+                        );
                         let mgr = self.manager.lock().await;
                         for id in &running {
-                            if let Some(agent) = mgr.get(id) {
-                                if agent.is_running() {
-                                    let _ = agent.pty.signal(Signal::SIGKILL);
-                                }
+                            if let Some(agent) = mgr.get(id)
+                                && agent.is_running()
+                            {
+                                let _ = agent.pty.signal(Signal::SIGKILL);
                             }
                         }
                         break;
@@ -307,10 +314,7 @@ async fn handle_connection(
 
     loop {
         line.clear();
-        let n = reader
-            .read_line(&mut line)
-            .await
-            .map_err(ServerError::Io)?;
+        let n = reader.read_line(&mut line).await.map_err(ServerError::Io)?;
 
         if n == 0 {
             // EOF - client disconnected
@@ -353,7 +357,9 @@ async fn handle_connection(
                     // Don't warn about it - just log at debug level
                     if let ServerError::Io(ref io_err) = e {
                         if io_err.kind() == std::io::ErrorKind::BrokenPipe {
-                            debug!("Attach session ended: broken pipe (expected when tmux kills pane)");
+                            debug!(
+                                "Attach session ended: broken pipe (expected when tmux kills pane)"
+                            );
                         } else {
                             warn!("Attach session error: {}", e);
                         }
@@ -367,14 +373,13 @@ async fn handle_connection(
         }
 
         // Handle events request specially - it switches to streaming mode
-        if let Request::Events { filter, include_output } = &request {
-            let events_result = handle_events(
-                filter.clone(),
-                *include_output,
-                writer,
-                &event_tx,
-            )
-            .await;
+        if let Request::Events {
+            filter,
+            include_output,
+        } = &request
+        {
+            let events_result =
+                handle_events(filter.clone(), *include_output, writer, &event_tx).await;
 
             match events_result {
                 Ok(()) => {
@@ -391,8 +396,8 @@ async fn handle_connection(
         let is_shutdown = matches!(request, Request::Shutdown);
         let response = handle_request(request, &manager, &event_tx).await;
 
-        let mut json = serde_json::to_string(&response)
-            .expect("Response serialization should never fail");
+        let mut json =
+            serde_json::to_string(&response).expect("Response serialization should never fail");
         json.push('\n');
         writer
             .write_all(json.as_bytes())
@@ -419,7 +424,20 @@ async fn handle_request(
     match request {
         Request::Ping => Response::Pong,
 
-        Request::Spawn { cmd, rows, cols, name, labels, timeout, max_output, env, cwd, no_resize, record, memory_limit } => {
+        Request::Spawn {
+            cmd,
+            rows,
+            cols,
+            name,
+            labels,
+            timeout,
+            max_output,
+            env,
+            cwd,
+            no_resize,
+            record,
+            memory_limit,
+        } => {
             if cmd.is_empty() {
                 return Response::error("command is empty");
             }
@@ -440,15 +458,18 @@ async fn handle_request(
 
             // Auto-inject TRACEPARENT for distributed tracing if not already set.
             // This propagates the current trace context to spawned agent processes.
-            if !env_vars.iter().any(|(k, _)| k == "TRACEPARENT") {
-                if let Some(tp) = crate::telemetry::current_traceparent() {
-                    env_vars.push(("TRACEPARENT".to_string(), tp));
-                }
+            if !env_vars.iter().any(|(k, _)| k == "TRACEPARENT")
+                && let Some(tp) = crate::telemetry::current_traceparent()
+            {
+                env_vars.push(("TRACEPARENT".to_string(), tp));
             }
 
             // Build resource limits if any are specified
             let limits = if timeout.is_some() || max_output.is_some() {
-                Some(crate::protocol::ResourceLimits { timeout, max_output })
+                Some(crate::protocol::ResourceLimits {
+                    timeout,
+                    max_output,
+                })
             } else {
                 None
             };
@@ -471,11 +492,21 @@ async fn handle_request(
                 if custom_name.is_empty() {
                     return Response::error("agent name cannot be empty");
                 }
-                if !custom_name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/') {
-                    return Response::error("agent name must contain only alphanumeric characters, hyphens, underscores, and slashes");
+                if !custom_name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/')
+                {
+                    return Response::error(
+                        "agent name must contain only alphanumeric characters, hyphens, underscores, and slashes",
+                    );
                 }
-                if custom_name.starts_with('/') || custom_name.ends_with('/') || custom_name.contains("//") {
-                    return Response::error("agent name must not start/end with '/' or contain '//'");
+                if custom_name.starts_with('/')
+                    || custom_name.ends_with('/')
+                    || custom_name.contains("//")
+                {
+                    return Response::error(
+                        "agent name must not start/end with '/' or contain '//'",
+                    );
                 }
                 if custom_name.len() > 64 {
                     return Response::error("agent name must be 64 characters or fewer");
@@ -483,7 +514,9 @@ async fn handle_request(
                 // Check for uniqueness - only allow reusing names of exited agents
                 if let Some(existing) = mgr.get(&custom_name) {
                     if existing.is_running() {
-                        return Response::error(format!("agent name already in use: {custom_name}"));
+                        return Response::error(format!(
+                            "agent name already in use: {custom_name}"
+                        ));
                     }
                     // Remove the exited agent to reuse the name
                     mgr.remove(&custom_name);
@@ -520,18 +553,28 @@ async fn handle_request(
                 wrapped
             } else {
                 if wrap_memory_limit.is_some() {
-                    warn!("--memory-limit requested but systemd-run not available; spawning without cgroup limits");
+                    warn!(
+                        "--memory-limit requested but systemd-run not available; spawning without cgroup limits"
+                    );
                 }
                 cmd.clone()
             };
 
-            let spawn_env = pty::SpawnEnv {
-                vars: env_vars,
-            };
+            let spawn_env = pty::SpawnEnv { vars: env_vars };
             match pty::spawn_with_env(&effective_cmd, rows, cols, &spawn_env, cwd.as_deref()) {
                 Ok(pty_process) => {
                     let pid = pty_process.pid.as_raw() as u32;
-                    let agent = Agent::new(id.clone(), cmd.clone(), labels.clone(), limits, pty_process, rows, cols, no_resize, record);
+                    let agent = Agent::new(
+                        id.clone(),
+                        cmd.clone(),
+                        labels.clone(),
+                        limits,
+                        pty_process,
+                        rows,
+                        cols,
+                        no_resize,
+                        record,
+                    );
                     mgr.add(agent);
                     info!(%id, %pid, ?labels, ?limits, "Spawned agent");
 
@@ -590,7 +633,13 @@ async fn handle_request(
             Response::Agents { agents }
         }
 
-        Request::Kill { id, labels, all, signal, proc_filter } => {
+        Request::Kill {
+            id,
+            labels,
+            all,
+            signal,
+            proc_filter,
+        } => {
             // Validate signal number - only allow standard signals (1-31)
             // Real-time signals (32-64) and invalid numbers are rejected
             if !(1..=31).contains(&signal) {
@@ -619,10 +668,10 @@ async fn handle_request(
                         if !labels.is_empty() && !a.has_labels(&labels) {
                             return false;
                         }
-                        if let Some(ref pf) = proc_filter {
-                            if !a.command.join(" ").contains(pf.as_str()) {
-                                return false;
-                            }
+                        if let Some(ref pf) = proc_filter
+                            && !a.command.join(" ").contains(pf.as_str())
+                        {
+                            return false;
                         }
                         true
                     })
@@ -633,25 +682,27 @@ async fn handle_request(
             };
 
             if targets.is_empty() {
-                if id.is_some() {
-                    return Response::error(format!("agent not found: {}", id.unwrap()));
+                if let Some(id) = &id {
+                    return Response::error(format!("agent not found: {id}"));
                 }
                 if all {
                     return Response::error("no running agents to kill");
                 }
                 if proc_filter.is_some() && !labels.is_empty() {
-                    return Response::error("no agents match the specified process filter and labels");
+                    return Response::error(
+                        "no agents match the specified process filter and labels",
+                    );
                 }
                 if proc_filter.is_some() {
                     return Response::error("no agents match the specified process filter");
                 }
                 return Response::error("no agents match the specified labels");
             }
-            
+
             let sig = Signal::try_from(signal).unwrap_or(Signal::SIGTERM);
             let mut errors = Vec::new();
             let mut killed = 0;
-            
+
             for target_id in targets {
                 if let Some(agent) = mgr.get(&target_id) {
                     // Check if agent already exited
@@ -670,17 +721,22 @@ async fn handle_request(
                     }
                 }
             }
-            
+
             if !errors.is_empty() {
                 Response::error(format!("failed to kill some agents: {}", errors.join(", ")))
-            } else if killed == 0 && id.is_some() {
-                Response::error(format!("agent not found: {}", id.unwrap()))
+            } else if let (0, Some(id)) = (killed, &id) {
+                Response::error(format!("agent not found: {id}"))
             } else {
                 Response::Ok
             }
         }
 
-        Request::Send { id, data, newline, enter } => {
+        Request::Send {
+            id,
+            data,
+            newline,
+            enter,
+        } => {
             let mut mgr = manager.lock().await;
             if let Some(agent) = mgr.get_mut(&id) {
                 // Record the command before sending
@@ -702,8 +758,7 @@ async fn handle_request(
                 // Write to PTY master
                 let fd = agent.pty.master_fd();
                 let borrowed_fd = crate::sys::borrow_fd(fd);
-                match nix::unistd::write(borrowed_fd, &bytes)
-                {
+                match nix::unistd::write(borrowed_fd, &bytes) {
                     Ok(_) => Response::Ok,
                     Err(e) => Response::error(format!("write failed: {e}")),
                 }
@@ -720,8 +775,7 @@ async fn handle_request(
 
                 let fd = agent.pty.master_fd();
                 let borrowed_fd = crate::sys::borrow_fd(fd);
-                match nix::unistd::write(borrowed_fd, &data)
-                {
+                match nix::unistd::write(borrowed_fd, &data) {
                     Ok(_) => Response::Ok,
                     Err(e) => Response::error(format!("write failed: {e}")),
                 }
@@ -819,17 +873,21 @@ async fn handle_request(
             Response::error("events request should not reach handle_request")
         }
 
-        Request::Resize { id, rows, cols, clear_transcript } => {
+        Request::Resize {
+            id,
+            rows,
+            cols,
+            clear_transcript,
+        } => {
             // Validate dimensions to prevent crashes or resource exhaustion
             const MIN_SIZE: u16 = 1;
             const MAX_SIZE: u16 = 500;
-            if rows < MIN_SIZE || rows > MAX_SIZE || cols < MIN_SIZE || cols > MAX_SIZE {
+            if !(MIN_SIZE..=MAX_SIZE).contains(&rows) || !(MIN_SIZE..=MAX_SIZE).contains(&cols) {
                 return Response::error(format!(
-                    "invalid dimensions: {}x{} (must be {}-{})",
-                    cols, rows, MIN_SIZE, MAX_SIZE
+                    "invalid dimensions: {cols}x{rows} (must be {MIN_SIZE}-{MAX_SIZE})"
                 ));
             }
-            
+
             let mut mgr = manager.lock().await;
             if let Some(agent) = mgr.get_mut(&id) {
                 // Resize the PTY
@@ -846,8 +904,7 @@ async fn handle_request(
                     agent.screen_cleared_at = Some(std::time::Instant::now());
                     // Send SIGWINCH to force child process to redraw its UI
                     // This is critical for TUI programs like htop that need to redraw after transcript clear
-                    use nix::sys::signal::Signal;
-                    if let Err(e) = agent.pty.signal(Signal::SIGWINCH) {
+                    if let Err(e) = agent.pty.signal(nix::sys::signal::Signal::SIGWINCH) {
                         warn!(%id, "Failed to send SIGWINCH after transcript clear: {e}");
                     }
                     info!(%id, %rows, %cols, "Resized agent and cleared transcript");
@@ -863,13 +920,13 @@ async fn handle_request(
         Request::GetRecording { id } => {
             let mgr = manager.lock().await;
             if let Some(agent) = mgr.get(&id) {
-                if !agent.recording {
-                    Response::error(format!("recording not enabled for agent: {id}"))
-                } else {
+                if agent.recording {
                     Response::Recording {
                         agent_id: id,
                         commands: agent.recorded_commands.clone(),
                     }
+                } else {
+                    Response::error(format!("recording not enabled for agent: {id}"))
                 }
             } else {
                 Response::error(format!("agent not found: {id}"))
@@ -879,15 +936,19 @@ async fn handle_request(
         Request::GetEnv { id } => {
             let mgr = manager.lock().await;
             if let Some(agent) = mgr.get(&id) {
-                if !agent.is_running() {
-                    Response::error(format!("agent {id} has exited — environment no longer available"))
-                } else {
+                if agent.is_running() {
                     let pid = agent.pid();
                     drop(mgr); // Release lock before I/O
                     match read_proc_environ(pid) {
                         Ok(env) => Response::AgentEnv { id, env },
-                        Err(e) => Response::error(format!("failed to read environment for {id}: {e}")),
+                        Err(e) => {
+                            Response::error(format!("failed to read environment for {id}: {e}"))
+                        }
                     }
+                } else {
+                    Response::error(format!(
+                        "agent {id} has exited — environment no longer available"
+                    ))
                 }
             } else {
                 Response::error(format!("agent not found: {id}"))
@@ -929,8 +990,8 @@ async fn handle_attach(
             agent.screen.size()
         } else {
             let response = Response::error(format!("agent not found: {agent_id}"));
-            let mut json = serde_json::to_string(&response)
-                .expect("Response serialization should never fail");
+            let mut json =
+                serde_json::to_string(&response).expect("Response serialization should never fail");
             json.push('\n');
             writer.write_all(json.as_bytes()).await.ok();
             return Ok(());
@@ -942,8 +1003,8 @@ async fn handle_attach(
         id: agent_id.clone(),
         size,
     };
-    let mut json = serde_json::to_string(&response)
-        .expect("Response serialization should never fail");
+    let mut json =
+        serde_json::to_string(&response).expect("Response serialization should never fail");
     json.push('\n');
     writer
         .write_all(json.as_bytes())
@@ -959,22 +1020,26 @@ async fn handle_attach(
     {
         let mgr = manager.lock().await;
         if let Some(agent) = mgr.get(&agent_id) {
-            let recently_cleared = agent.screen_cleared_at
-                .map_or(false, |t| t.elapsed() < std::time::Duration::from_millis(1000));
+            let recently_cleared = agent
+                .screen_cleared_at
+                .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(1));
 
             if recently_cleared {
                 // Screen was just cleared, send a simple clear instead of stale content
                 info!("Screen recently cleared, sending clear screen instead of stale render");
                 drop(mgr);
                 writer
-                    .write_all(b"\x1b[2J\x1b[H")  // Clear screen + cursor home
+                    .write_all(b"\x1b[2J\x1b[H") // Clear screen + cursor home
                     .await
                     .map_err(ServerError::Io)?;
                 writer.flush().await.map_err(ServerError::Io)?;
             } else {
                 // Normal case: send full screen render
                 let initial_screen = agent.screen.render_full_screen();
-                info!("Sending initial screen render: {} bytes", initial_screen.len());
+                info!(
+                    "Sending initial screen render: {} bytes",
+                    initial_screen.len()
+                );
                 drop(mgr); // Release lock before async write
                 writer
                     .write_all(&initial_screen)
@@ -987,14 +1052,7 @@ async fn handle_attach(
     }
 
     // Run the I/O bridge
-    let result = run_attach_bridge(
-        &agent_id,
-        readonly,
-        &mut reader,
-        &mut writer,
-        manager,
-    )
-    .await;
+    let result = run_attach_bridge(&agent_id, readonly, &mut reader, &mut writer, manager).await;
 
     // Clear attached flag and determine end reason
     let end_reason = {
@@ -1002,7 +1060,7 @@ async fn handle_attach(
         if let Some(agent) = mgr.get_mut(&agent_id) {
             agent.attached = false;
         }
-        
+
         match &result {
             Ok(reason) => reason.clone(),
             Err(e) => AttachEndReason::Error {
@@ -1011,7 +1069,7 @@ async fn handle_attach(
         }
     };
     // Lock released here before event broadcast
-    
+
     // Publish exit event outside the lock to avoid holding it during broadcast
     // (pty_reader_task skips attached agents, so we must publish here)
     if let AttachEndReason::AgentExited { exit_code } = &end_reason {
@@ -1022,8 +1080,8 @@ async fn handle_attach(
     }
 
     let response = Response::AttachEnded { reason: end_reason };
-    let mut json = serde_json::to_string(&response)
-        .expect("Response serialization should never fail");
+    let mut json =
+        serde_json::to_string(&response).expect("Response serialization should never fail");
     json.push('\n');
     writer.write_all(json.as_bytes()).await.ok();
 
@@ -1041,7 +1099,7 @@ async fn handle_events(
     event_tx: &broadcast::Sender<Event>,
 ) -> Result<(), ServerError> {
     let mut event_rx = event_tx.subscribe();
-    
+
     info!(?filter, %include_output, "Events subscription started");
 
     loop {
@@ -1069,7 +1127,7 @@ async fn handle_events(
                 let mut json = serde_json::to_string(&response)
                     .expect("Response serialization should never fail");
                 json.push('\n');
-                
+
                 if writer.write_all(json.as_bytes()).await.is_err() {
                     // Client disconnected
                     debug!("Events client disconnected");
@@ -1160,7 +1218,7 @@ async fn run_attach_bridge(
             }
 
             // Poll PTY for output
-            _ = poll_interval.tick() => {
+            () = poll_interval.tick() => {
                 // Hold lock while accessing agent and its fd
                 let mut mgr = manager.lock().await;
                 if let Some(agent) = mgr.get_mut(agent_id) {
@@ -1215,7 +1273,7 @@ async fn run_attach_bridge(
 
 /// Background task that reads from PTY masters and updates transcripts/screens.
 async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast::Sender<Event>) {
-    use crate::runtime::time::{interval, Duration};
+    use crate::runtime::time::{Duration, interval};
 
     let mut poll_interval = interval(Duration::from_millis(10));
 
@@ -1253,14 +1311,14 @@ async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast:
                 let mut buf = [0u8; 4096];
 
                 let borrowed_fd = crate::sys::borrow_fd(fd);
-                
+
                 // Non-blocking read
                 match nix::unistd::read(borrowed_fd, &mut buf) {
                     Ok(n) if n > 0 => {
                         let data = &buf[..n];
                         agent.transcript.append(data);
                         agent.screen.process(data);
-                        
+
                         // Publish output event
                         let _ = event_tx.send(Event::AgentOutput {
                             id: id.clone(),
@@ -1276,14 +1334,15 @@ async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast:
                             // Determine exit reason based on exit code:
                             // - 128 + signal_num indicates killed by signal
                             // - SIGTERM (15) -> 143, SIGKILL (9) -> 137
-                            agent.exit_reason = Some(if agent.sigterm_sent && (code == 143 || code == 137) {
-                                // Process was killed by our timeout signals
-                                ExitReason::Timeout
-                            } else {
-                                ExitReason::Normal
-                            });
+                            agent.exit_reason =
+                                Some(if agent.sigterm_sent && (code == 143 || code == 137) {
+                                    // Process was killed by our timeout signals
+                                    ExitReason::Timeout
+                                } else {
+                                    ExitReason::Normal
+                                });
                             info!(%id, %code, exit_reason = ?agent.exit_reason, "Agent exited");
-                            
+
                             // Publish exit event
                             let _ = event_tx.send(Event::AgentExited {
                                 id: id.clone(),
@@ -1298,25 +1357,27 @@ async fn pty_reader_task(manager: Arc<Mutex<AgentManager>>, event_tx: broadcast:
 
                 // Check if child exited
                 if agent.is_running()
-                    && let Ok(Some(code)) = agent.pty.try_wait() {
-                        agent.state = InternalAgentState::Exited { code };
-                        // Determine exit reason based on exit code:
-                        // - 128 + signal_num indicates killed by signal
-                        // - SIGTERM (15) -> 143, SIGKILL (9) -> 137
-                        agent.exit_reason = Some(if agent.sigterm_sent && (code == 143 || code == 137) {
+                    && let Ok(Some(code)) = agent.pty.try_wait()
+                {
+                    agent.state = InternalAgentState::Exited { code };
+                    // Determine exit reason based on exit code:
+                    // - 128 + signal_num indicates killed by signal
+                    // - SIGTERM (15) -> 143, SIGKILL (9) -> 137
+                    agent.exit_reason =
+                        Some(if agent.sigterm_sent && (code == 143 || code == 137) {
                             // Process was killed by our timeout signals
                             ExitReason::Timeout
                         } else {
                             ExitReason::Normal
                         });
-                        info!(%id, %code, exit_reason = ?agent.exit_reason, "Agent exited");
-                        
-                        // Publish exit event
-                        let _ = event_tx.send(Event::AgentExited {
-                            id: id.clone(),
-                            exit_code: Some(code),
-                        });
-                    }
+                    info!(%id, %code, exit_reason = ?agent.exit_reason, "Agent exited");
+
+                    // Publish exit event
+                    let _ = event_tx.send(Event::AgentExited {
+                        id: id.clone(),
+                        exit_code: Some(code),
+                    });
+                }
             }
         }
     }

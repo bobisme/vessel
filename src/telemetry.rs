@@ -58,7 +58,9 @@ pub fn init(verbose: bool) -> TelemetryGuard {
         Some(_) => init_otlp(verbose),
         #[cfg(not(feature = "otel"))]
         Some(_) => {
-            eprintln!("warning: OTEL_EXPORTER_OTLP_ENDPOINT set but vessel built without 'otel' feature");
+            eprintln!(
+                "warning: OTEL_EXPORTER_OTLP_ENDPOINT set but vessel built without 'otel' feature"
+            );
             init_fmt(verbose)
         }
     }
@@ -70,12 +72,13 @@ pub fn init(verbose: bool) -> TelemetryGuard {
 /// The file log always uses `vessel=info` minimum so server lifecycle events
 /// are captured even without `--verbose`.
 fn init_fmt(verbose: bool) -> TelemetryGuard {
-    use tracing_subscriber::layer::SubscriberExt as _;
-    use tracing_subscriber::util::SubscriberInitExt as _;
-
-    let default = if verbose { "vessel=debug" } else { "vessel=warn" };
-    let stderr_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(default));
+    let default = if verbose {
+        "vessel=debug"
+    } else {
+        "vessel=warn"
+    };
+    let stderr_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     if let Some(log_path) = std::env::var("VESSEL_LOG").ok().filter(|s| !s.is_empty()) {
         // Open log file (append mode, create if missing)
@@ -197,15 +200,18 @@ fn init_otlp(verbose: bool) -> TelemetryGuard {
         .with_resource(resource)
         .build();
 
-    let log_layer = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
-        &log_provider,
-    );
+    let log_layer =
+        opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(&log_provider);
 
     // --- Parent context (distributed tracing) ---
     install_parent_context();
 
     // --- Subscriber ---
-    let default = if verbose { "vessel=debug" } else { "vessel=warn" };
+    let default = if verbose {
+        "vessel=debug"
+    } else {
+        "vessel=warn"
+    };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
 
     tracing_subscriber::registry()
@@ -226,6 +232,7 @@ fn init_otlp(verbose: bool) -> TelemetryGuard {
 /// Use this to propagate trace context to child processes via environment
 /// variables.
 #[cfg(feature = "otel")]
+#[must_use]
 pub fn current_traceparent() -> Option<String> {
     use opentelemetry::propagation::TextMapPropagator as _;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
@@ -243,7 +250,7 @@ pub fn current_traceparent() -> Option<String> {
     None
 }
 
-/// If `TRACEPARENT` is set, parse it and install as the current OTel context
+/// If `TRACEPARENT` is set, parse it and install as the current `OTel` context
 /// so that subsequent spans become children of the remote parent.
 #[cfg(feature = "otel")]
 fn install_parent_context() {
@@ -258,10 +265,10 @@ fn install_parent_context() {
         let cx = propagator.extract(&carrier);
         // Attach as the current context — tracing-opentelemetry's layer will
         // pick this up as the parent for root-level spans.
-        let _guard = cx.attach();
+        let guard = cx.attach();
         // The guard is intentionally leaked: we want this context to remain
         // active for the lifetime of the process.
-        std::mem::forget(_guard);
+        std::mem::forget(guard);
     }
 }
 

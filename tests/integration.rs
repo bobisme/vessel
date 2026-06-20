@@ -2,12 +2,12 @@
 //!
 //! Each test uses a unique socket path to avoid conflicts.
 
-use vessel::protocol::{AgentState, AttachEndReason};
-use vessel::runtime;
-use vessel::{Client, Request, Response, Server};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
+use vessel::protocol::{AgentState, AttachEndReason};
+use vessel::runtime;
+use vessel::{Client, Request, Response, Server};
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 

@@ -5,24 +5,24 @@
 //! ```ignore
 //! let harness = TestHarness::new().await;
 //! let agent = harness.spawn(&["bash"]).await?;
-//! 
+//!
 //! agent.send("echo hello").await?;
 //! agent.wait_for_content("hello", Duration::from_secs(5)).await?;
-//! 
+//!
 //! let snapshot = agent.snapshot().await?;
 //! assert!(snapshot.contains("hello"));
 //! ```
 
-use crate::{Client, Request, Response, Server};
-use regex::Regex;
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use thiserror::Error;
 use crate::runtime::sync::Mutex;
 use crate::runtime::task::JoinHandle;
 use crate::runtime::time::Instant;
+use crate::{Client, Request, Response, Server};
+use regex::Regex;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
+use thiserror::Error;
 
 static TEST_COUNTER: AtomicU32 = AtomicU32::new(0);
 
@@ -56,7 +56,7 @@ impl TestHarness {
     /// Create a new test harness with a unique socket path.
     pub async fn new() -> Self {
         let socket_path = Self::unique_socket_path();
-        
+
         // Start server in background
         let server_socket = socket_path.clone();
         let server_handle = crate::runtime::task::spawn(async move {
@@ -146,7 +146,7 @@ impl TestHarness {
     }
 
     /// Get the socket path (useful for direct connections).
-    #[must_use] 
+    #[must_use]
     pub const fn socket_path(&self) -> &PathBuf {
         &self.socket_path
     }
@@ -176,7 +176,7 @@ pub struct AgentHandle {
 
 impl AgentHandle {
     /// Get the agent ID.
-    #[must_use] 
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -359,7 +359,8 @@ impl AgentHandle {
         prompt_pattern: &str,
         timeout_duration: Duration,
     ) -> Result<String, TestError> {
-        self.wait_for_pattern(prompt_pattern, timeout_duration).await
+        self.wait_for_pattern(prompt_pattern, timeout_duration)
+            .await
     }
 
     /// Wait for content to NOT be present (useful for waiting for spinners/loading to finish).

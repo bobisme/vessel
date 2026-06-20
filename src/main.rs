@@ -1,10 +1,14 @@
 //! vessel — PTY-based Agent Runtime
 
-use vessel::{default_socket_path, json_envelope, resolve_format, run_attach, text_record, AttachConfig, Cli, Client, Command, DumpFormat, OutputFormat, RecordedCommand, Request, Response, Server, TmuxView, ViewError};
 use clap::Parser;
 use serde_json::json;
 use std::io::Write;
 use tracing::error;
+use vessel::{
+    AttachConfig, Cli, Client, Command, DumpFormat, OutputFormat, RecordedCommand, Request,
+    Response, Server, TmuxView, ViewError, default_socket_path, json_envelope, resolve_format,
+    run_attach, text_record,
+};
 
 /// Parse a signal name or number into a Unix signal number.
 ///
@@ -51,7 +55,7 @@ struct RawOutputGuard {
 
 impl Drop for RawOutputGuard {
     fn drop(&mut self) {
-        use nix::sys::termios::{tcsetattr, SetArg};
+        use nix::sys::termios::{SetArg, tcsetattr};
         let _ = tcsetattr(&self.fd, SetArg::TCSAFLUSH, &self.original_termios);
     }
 }
@@ -61,7 +65,7 @@ impl Drop for RawOutputGuard {
 /// cursor positioning get mangled (e.g., \n becomes \r\n).
 /// Returns a guard that restores the original settings on drop.
 fn disable_output_postprocessing() -> Option<RawOutputGuard> {
-    use nix::sys::termios::{tcgetattr, tcsetattr, OutputFlags, SetArg};
+    use nix::sys::termios::{OutputFlags, SetArg, tcgetattr, tcsetattr};
     use std::os::fd::AsFd;
 
     let stdout = std::io::stdout();
@@ -106,6 +110,9 @@ fn shell_escape(s: &str) -> String {
 /// longer gaps are typically idle time.
 fn compute_delay(prev_ms: u64, curr_ms: u64) -> f64 {
     let delta_ms = curr_ms.saturating_sub(prev_ms);
+    // Result is clamped to [0.1, 2.0]; precision loss on the millisecond delta is
+    // irrelevant for a sub-second sleep delay.
+    #[allow(clippy::cast_precision_loss)]
     let secs = delta_ms as f64 / 1000.0;
     secs.clamp(0.1, 2.0)
 }
@@ -116,7 +123,10 @@ fn format_bytes(bytes: u64) -> String {
     const MB: u64 = 1024 * KB;
     const GB: u64 = 1024 * MB;
     if bytes >= GB {
-        format!("{:.1}G", bytes as f64 / GB as f64)
+        // Human-readable display only; sub-mantissa precision is not meaningful here.
+        #[allow(clippy::cast_precision_loss)]
+        let gib = bytes as f64 / GB as f64;
+        format!("{gib:.1}G")
     } else if bytes >= MB {
         format!("{}M", bytes / MB)
     } else if bytes >= KB {
@@ -138,70 +148,96 @@ fn generate_test_script(agent_id: &str, commands: &[RecordedCommand]) -> String 
     let now = format!("unix:{now_secs}");
 
     let mut script = String::new();
-    writeln!(script, "#!/bin/bash").unwrap();
-    writeln!(script, "# Auto-generated test script from vessel recording").unwrap();
-    writeln!(script, "# Agent: {agent_id}").unwrap();
-    writeln!(script, "# Generated: {now}").unwrap();
-    writeln!(script, "# Commands: {}", commands.len()).unwrap();
-    writeln!(script, "set -e").unwrap();
-    writeln!(script).unwrap();
-    writeln!(script, "# Spawn the agent").unwrap();
-    writeln!(script, "# TODO: Replace with the actual command that was used to spawn the agent").unwrap();
-    writeln!(script, "AGENT=$(vessel spawn --record -- echo 'replace with original command')").unwrap();
-    writeln!(script).unwrap();
-    writeln!(script, "# Cleanup on exit").unwrap();
-    writeln!(script, "cleanup() {{ vessel kill \"$AGENT\" 2>/dev/null || true; }}").unwrap();
-    writeln!(script, "trap cleanup EXIT").unwrap();
-    writeln!(script).unwrap();
-    writeln!(script, "# Wait for agent to be ready").unwrap();
-    writeln!(script, "sleep 0.5").unwrap();
+    writeln!(script, "#!/bin/bash").expect("writing to a String never fails");
+    writeln!(script, "# Auto-generated test script from vessel recording")
+        .expect("writing to a String never fails");
+    writeln!(script, "# Agent: {agent_id}").expect("writing to a String never fails");
+    writeln!(script, "# Generated: {now}").expect("writing to a String never fails");
+    writeln!(script, "# Commands: {}", commands.len()).expect("writing to a String never fails");
+    writeln!(script, "set -e").expect("writing to a String never fails");
+    writeln!(script).expect("writing to a String never fails");
+    writeln!(script, "# Spawn the agent").expect("writing to a String never fails");
+    writeln!(
+        script,
+        "# TODO: Replace with the actual command that was used to spawn the agent"
+    )
+    .expect("writing to a String never fails");
+    writeln!(
+        script,
+        "AGENT=$(vessel spawn --record -- echo 'replace with original command')"
+    )
+    .expect("writing to a String never fails");
+    writeln!(script).expect("writing to a String never fails");
+    writeln!(script, "# Cleanup on exit").expect("writing to a String never fails");
+    writeln!(
+        script,
+        "cleanup() {{ vessel kill \"$AGENT\" 2>/dev/null || true; }}"
+    )
+    .expect("writing to a String never fails");
+    writeln!(script, "trap cleanup EXIT").expect("writing to a String never fails");
+    writeln!(script).expect("writing to a String never fails");
+    writeln!(script, "# Wait for agent to be ready").expect("writing to a String never fails");
+    writeln!(script, "sleep 0.5").expect("writing to a String never fails");
 
     for (i, cmd) in commands.iter().enumerate() {
-        writeln!(script).unwrap();
+        writeln!(script).expect("writing to a String never fails");
 
         // Compute delay from previous command
         if i > 0 {
             let delay = compute_delay(commands[i - 1].timestamp, cmd.timestamp);
-            writeln!(script, "sleep {delay:.1}").unwrap();
+            writeln!(script, "sleep {delay:.1}").expect("writing to a String never fails");
         }
 
         match cmd.command.as_str() {
             "send" => {
                 // The payload may contain a trailing newline if --newline was used.
                 // Detect that and use the -n flag accordingly.
-                let (text, use_newline) = if let Some(stripped) = cmd.payload.strip_suffix('\n') {
-                    (stripped, true)
-                } else {
-                    (cmd.payload.as_str(), false)
-                };
+                let (text, use_newline) = cmd
+                    .payload
+                    .strip_suffix('\n')
+                    .map_or((cmd.payload.as_str(), false), |stripped| (stripped, true));
 
                 let escaped = shell_escape(text);
                 if use_newline {
-                    writeln!(script, "# Command {}: send text (with newline)", i + 1).unwrap();
-                    writeln!(script, "vessel send -n \"$AGENT\" {escaped}").unwrap();
+                    writeln!(script, "# Command {}: send text (with newline)", i + 1)
+                        .expect("writing to a String never fails");
+                    writeln!(script, "vessel send -n \"$AGENT\" {escaped}")
+                        .expect("writing to a String never fails");
                 } else {
-                    writeln!(script, "# Command {}: send text", i + 1).unwrap();
-                    writeln!(script, "vessel send \"$AGENT\" {escaped}").unwrap();
+                    writeln!(script, "# Command {}: send text", i + 1)
+                        .expect("writing to a String never fails");
+                    writeln!(script, "vessel send \"$AGENT\" {escaped}")
+                        .expect("writing to a String never fails");
                 }
             }
             "send_bytes" => {
-                writeln!(script, "# Command {}: send raw bytes", i + 1).unwrap();
-                writeln!(script, "vessel send-bytes \"$AGENT\" {}", cmd.payload).unwrap();
+                writeln!(script, "# Command {}: send raw bytes", i + 1)
+                    .expect("writing to a String never fails");
+                writeln!(script, "vessel send-bytes \"$AGENT\" {}", cmd.payload)
+                    .expect("writing to a String never fails");
             }
             "send_keys" => {
                 let escaped = shell_escape(&cmd.payload);
-                writeln!(script, "# Command {}: send key", i + 1).unwrap();
-                writeln!(script, "vessel send-keys \"$AGENT\" {escaped}").unwrap();
+                writeln!(script, "# Command {}: send key", i + 1)
+                    .expect("writing to a String never fails");
+                writeln!(script, "vessel send-keys \"$AGENT\" {escaped}")
+                    .expect("writing to a String never fails");
             }
             other => {
-                writeln!(script, "# Command {}: unknown command type '{other}' — skipped", i + 1).unwrap();
+                writeln!(
+                    script,
+                    "# Command {}: unknown command type '{other}' — skipped",
+                    i + 1
+                )
+                .expect("writing to a String never fails");
             }
         }
     }
 
-    writeln!(script).unwrap();
-    writeln!(script, "# Cleanup is handled by the EXIT trap").unwrap();
-    writeln!(script, "echo 'Test passed!'").unwrap();
+    writeln!(script).expect("writing to a String never fails");
+    writeln!(script, "# Cleanup is handled by the EXIT trap")
+        .expect("writing to a String never fails");
+    writeln!(script, "echo 'Test passed!'").expect("writing to a String never fails");
 
     script
 }
@@ -256,7 +292,13 @@ async fn run_server(
         tracing::info!("Re-execing into vessel-server.scope via systemd-run");
         let exe = std::env::current_exe()?;
         let status = std::process::Command::new("systemd-run")
-            .args(["--user", "--scope", "--collect", "--unit=vessel-server", "--"])
+            .args([
+                "--user",
+                "--scope",
+                "--collect",
+                "--unit=vessel-server",
+                "--",
+            ])
             .arg(&exe)
             .args(["--socket", socket_path.to_str().unwrap_or_default()])
             .arg("server")
@@ -277,21 +319,22 @@ async fn run_server(
 
 /// Check if we're already running inside a vessel-owned systemd scope.
 fn in_vessel_scope() -> bool {
-    std::fs::read_to_string("/proc/self/cgroup")
-        .map(|cg| cg.contains("vessel-server.scope"))
-        .unwrap_or(false)
+    std::fs::read_to_string("/proc/self/cgroup").is_ok_and(|cg| cg.contains("vessel-server.scope"))
 }
 
-async fn run_doctor(
-    socket_path: std::path::PathBuf,
-) -> Result<(), Box<dyn std::error::Error>> {
+// Linear diagnostic routine that runs a sequence of independent checks; splitting
+// it would scatter the report without improving clarity.
+#[allow(clippy::too_many_lines)]
+async fn run_doctor(socket_path: std::path::PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::FileTypeExt;
 
     let mut all_ok = true;
 
     // 1. Check socket path
     print!("Socket path: {} ", socket_path.display());
-    let socket_dir = socket_path.parent().unwrap_or_else(|| std::path::Path::new("/tmp"));
+    let socket_dir = socket_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("/tmp"));
     if socket_dir.exists() {
         if socket_dir.metadata()?.permissions().readonly() {
             println!("[FAIL] directory not writable");
@@ -374,7 +417,16 @@ async fn run_doctor(
     {
         Ok(Response::Spawned { id, .. }) => {
             // Kill it
-            match client.request(Request::Kill { id: Some(id.clone()), labels: vec![], all: false, signal: 9, proc_filter: None }).await {
+            match client
+                .request(Request::Kill {
+                    id: Some(id.clone()),
+                    labels: vec![],
+                    all: false,
+                    signal: 9,
+                    proc_filter: None,
+                })
+                .await
+            {
                 Ok(Response::Ok) => println!("[OK]"),
                 Ok(other) => {
                     println!("[FAIL] kill returned: {other:?}");
@@ -412,7 +464,12 @@ async fn run_client(
     command: Command,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Attach command needs direct socket access, handle it separately
-    if let Command::Attach { id, readonly, detach_key } = command {
+    if let Command::Attach {
+        id,
+        readonly,
+        detach_key,
+    } = command
+    {
         return run_attach_command(socket_path, id, readonly, detach_key).await;
     }
 
@@ -422,12 +479,25 @@ async fn run_client(
     }
 
     // Subscribe command streams output from agents
-    if let Command::Subscribe { id, label, prefix, format } = command {
+    if let Command::Subscribe {
+        id,
+        label,
+        prefix,
+        format,
+    } = command
+    {
         return run_subscribe_command(socket_path, id, label, prefix, format).await;
     }
 
     // View command manages tmux session
-    if let Command::View { mux, mode, no_resize, label, new_session } = command {
+    if let Command::View {
+        mux,
+        mode,
+        no_resize,
+        label,
+        new_session,
+    } = command
+    {
         let auto_resize = !no_resize; // auto-resize is now the default
         return run_view_command(socket_path, mux, mode, auto_resize, label, new_session).await;
     }
@@ -447,7 +517,25 @@ async fn run_client(
     let mut client = Client::new(socket_path);
 
     match command {
-        Command::Spawn { rows, cols, name, label, timeout, max_output, mut env, env_inherit, cwd, no_resize, record, memory_limit, after, wait_for, format, json, cmd } => {
+        Command::Spawn {
+            rows,
+            cols,
+            name,
+            label,
+            timeout,
+            max_output,
+            mut env,
+            env_inherit,
+            cwd,
+            no_resize,
+            record,
+            memory_limit,
+            after,
+            wait_for,
+            format,
+            json,
+            cmd,
+        } => {
             // Wait for dependencies before spawning
             if !after.is_empty() || !wait_for.is_empty() {
                 wait_for_dependencies(&socket_path_ref, &after, &wait_for).await?;
@@ -460,12 +548,29 @@ async fn run_client(
                 }
             }
 
-            let request = Request::Spawn { cmd, rows, cols, name, labels: label, timeout, max_output, env, cwd, no_resize, record, memory_limit };
+            let request = Request::Spawn {
+                cmd,
+                rows,
+                cols,
+                name,
+                labels: label,
+                timeout,
+                max_output,
+                env,
+                cwd,
+                no_resize,
+                record,
+                memory_limit,
+            };
             let response = client.request(request).await?;
 
             match response {
                 Response::Spawned { id, pid } => {
-                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+                    let fmt = resolve_format(if json {
+                        Some("json")
+                    } else {
+                        format.as_deref()
+                    });
                     match fmt {
                         OutputFormat::Text => {
                             // Text output: just the ID (for agents parsing this)
@@ -501,7 +606,12 @@ async fn run_client(
             }
         }
 
-        Command::List { all, label, format, json } => {
+        Command::List {
+            all,
+            label,
+            format,
+            json,
+        } => {
             let response = client.request(Request::List { labels: label }).await?;
 
             match response {
@@ -517,7 +627,11 @@ async fn run_client(
                     };
 
                     // Determine output format (handle --json alias)
-                    let format_flag = if json { Some("json") } else { Some(format.as_str()) };
+                    let format_flag = if json {
+                        Some("json")
+                    } else {
+                        Some(format.as_str())
+                    };
                     let output_format = resolve_format(format_flag);
 
                     // Build full JSON objects for JSON output
@@ -594,7 +708,7 @@ async fn run_client(
                                 } else {
                                     text_record(&[&a.id, state, &cmd, &labels_str])
                                 };
-                                println!("{}", line);
+                                println!("{line}");
                             }
                         }
                         OutputFormat::Pretty => {
@@ -609,9 +723,12 @@ async fn run_client(
                                 // Check if any agent has RSS data
                                 let has_rss = agents.iter().any(|a| a.rss_bytes.is_some());
                                 if has_rss {
-                                    println!("{:<20} {:<8} {:<10} {:<8} {}", "ID", "PID", "STATE", "RSS", "COMMAND");
+                                    println!(
+                                        "{:<20} {:<8} {:<10} {:<8} COMMAND",
+                                        "ID", "PID", "STATE", "RSS"
+                                    );
                                 } else {
-                                    println!("{:<20} {:<8} {:<10} {}", "ID", "PID", "STATE", "COMMAND");
+                                    println!("{:<20} {:<8} {:<10} COMMAND", "ID", "PID", "STATE");
                                 }
                                 let mut total_rss: u64 = 0;
                                 for a in &agents {
@@ -626,20 +743,32 @@ async fn run_client(
                                         format!(" [{}]", a.labels.join(","))
                                     };
                                     if has_rss {
-                                        let rss_str = match a.rss_bytes {
-                                            Some(bytes) => {
+                                        let rss_str = a.rss_bytes.map_or_else(
+                                            || "-".to_string(),
+                                            |bytes| {
                                                 total_rss += bytes;
                                                 format_bytes(bytes)
-                                            }
-                                            None => "-".to_string(),
-                                        };
-                                        println!("{:<20} {:<8} {:<10} {:<8} {}{}", a.id, a.pid, state, rss_str, cmd, labels);
+                                            },
+                                        );
+                                        println!(
+                                            "{:<20} {:<8} {:<10} {:<8} {}{}",
+                                            a.id, a.pid, state, rss_str, cmd, labels
+                                        );
                                     } else {
-                                        println!("{:<20} {:<8} {:<10} {}{}", a.id, a.pid, state, cmd, labels);
+                                        println!(
+                                            "{:<20} {:<8} {:<10} {}{}",
+                                            a.id, a.pid, state, cmd, labels
+                                        );
                                     }
                                 }
                                 if has_rss && agents.len() > 1 {
-                                    println!("{:<20} {:<8} {:<10} {:<8}", "", "", "TOTAL", format_bytes(total_rss));
+                                    println!(
+                                        "{:<20} {:<8} {:<10} {:<8}",
+                                        "",
+                                        "",
+                                        "TOTAL",
+                                        format_bytes(total_rss)
+                                    );
                                 }
                             }
                         }
@@ -654,7 +783,15 @@ async fn run_client(
             }
         }
 
-        Command::Kill { id, label, all, force, proc, format, json } => {
+        Command::Kill {
+            id,
+            label,
+            all,
+            force,
+            proc,
+            format,
+            json,
+        } => {
             // Must specify either id, label, proc, or all
             if id.is_none() && label.is_empty() && !all && proc.is_none() {
                 return Err("must specify agent ID, --label, --proc, or --all".into());
@@ -664,12 +801,22 @@ async fn run_client(
                 return Err("--all cannot be combined with agent ID, --label, or --proc".into());
             }
             let signal = if force { 9 } else { 15 }; // SIGKILL or SIGTERM (default)
-            let request = Request::Kill { id: id.clone(), labels: label, all, signal, proc_filter: proc };
+            let request = Request::Kill {
+                id: id.clone(),
+                labels: label,
+                all,
+                signal,
+                proc_filter: proc,
+            };
             let response = client.request(request).await?;
 
             match response {
                 Response::Ok => {
-                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+                    let fmt = resolve_format(if json {
+                        Some("json")
+                    } else {
+                        format.as_deref()
+                    });
                     match fmt {
                         OutputFormat::Text => {
                             // Keep backward-compatible output
@@ -677,16 +824,12 @@ async fn run_client(
                         }
                         OutputFormat::Json => {
                             // JSON envelope with advice
-                            let data = if let Some(agent_id) = id {
-                                json!({"status": "ok", "id": agent_id})
-                            } else {
-                                json!({"status": "ok"})
-                            };
-                            let envelope = json_envelope(
-                                "result",
-                                data,
-                                vec!["vessel list".to_string()],
+                            let data = id.map_or_else(
+                                || json!({"status": "ok"}),
+                                |agent_id| json!({"status": "ok", "id": agent_id}),
                             );
+                            let envelope =
+                                json_envelope("result", data, vec!["vessel list".to_string()]);
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
                         OutputFormat::Pretty => {
@@ -719,7 +862,13 @@ async fn run_client(
             }
         }
 
-        Command::Signal { id, signal, label, all, proc } => {
+        Command::Signal {
+            id,
+            signal,
+            label,
+            all,
+            proc,
+        } => {
             if id.is_none() && label.is_empty() && !all && proc.is_none() {
                 return Err("must specify agent ID, --label, --proc, or --all".into());
             }
@@ -727,7 +876,13 @@ async fn run_client(
                 return Err("--all cannot be combined with agent ID, --label, or --proc".into());
             }
             let signal = parse_signal(&signal)?;
-            let request = Request::Kill { id, labels: label, all, signal, proc_filter: proc };
+            let request = Request::Kill {
+                id,
+                labels: label,
+                all,
+                signal,
+                proc_filter: proc,
+            };
             let response = client.request(request).await?;
 
             match response {
@@ -761,11 +916,12 @@ async fn run_client(
 
             match response {
                 Response::Ok => {
-                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+                    let fmt = resolve_format(if json {
+                        Some("json")
+                    } else {
+                        format.as_deref()
+                    });
                     match fmt {
-                        OutputFormat::Text => {
-                            // Keep text/pretty silent for fire-and-forget commands
-                        }
                         OutputFormat::Json => {
                             // JSON envelope for programmatic use
                             let envelope = json_envelope(
@@ -775,9 +931,8 @@ async fn run_client(
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
-                        OutputFormat::Pretty => {
-                            // Keep quiet for human use
-                        }
+                        // Keep text/pretty silent for fire-and-forget commands
+                        OutputFormat::Text | OutputFormat::Pretty => {}
                     }
                 }
                 Response::Error { message } => {
@@ -789,18 +944,27 @@ async fn run_client(
             }
         }
 
-        Command::SendBytes { id, hex, format, json } => {
+        Command::SendBytes {
+            id,
+            hex,
+            format,
+            json,
+        } => {
             let data = hex::decode(&hex).map_err(|e| format!("invalid hex: {e}"))?;
-            let request = Request::SendBytes { id: id.clone(), data };
+            let request = Request::SendBytes {
+                id: id.clone(),
+                data,
+            };
             let response = client.request(request).await?;
 
             match response {
                 Response::Ok => {
-                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+                    let fmt = resolve_format(if json {
+                        Some("json")
+                    } else {
+                        format.as_deref()
+                    });
                     match fmt {
-                        OutputFormat::Text => {
-                            // Keep text/pretty silent for fire-and-forget commands
-                        }
                         OutputFormat::Json => {
                             // JSON envelope for programmatic use
                             let envelope = json_envelope(
@@ -810,9 +974,8 @@ async fn run_client(
                             );
                             println!("{}", serde_json::to_string(&envelope)?);
                         }
-                        OutputFormat::Pretty => {
-                            // Keep quiet for human use
-                        }
+                        // Keep text/pretty silent for fire-and-forget commands
+                        OutputFormat::Text | OutputFormat::Pretty => {}
                     }
                 }
                 Response::Error { message } => {
@@ -824,12 +987,19 @@ async fn run_client(
             }
         }
 
-        Command::SendKeys { id, keys, format, json } => {
+        Command::SendKeys {
+            id,
+            keys,
+            format,
+            json,
+        } => {
             use vessel::parse_key_sequence;
             for key in keys {
-                let data = parse_key_sequence(&key)
-                    .ok_or_else(|| format!("unknown key: {key}"))?;
-                let request = Request::SendBytes { id: id.clone(), data };
+                let data = parse_key_sequence(&key).ok_or_else(|| format!("unknown key: {key}"))?;
+                let request = Request::SendBytes {
+                    id: id.clone(),
+                    data,
+                };
                 let response = client.request(request).await?;
 
                 match response {
@@ -843,11 +1013,12 @@ async fn run_client(
                 }
             }
             // Output after all keys are sent
-            let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+            let fmt = resolve_format(if json {
+                Some("json")
+            } else {
+                format.as_deref()
+            });
             match fmt {
-                OutputFormat::Text => {
-                    // Keep text/pretty silent for fire-and-forget commands
-                }
                 OutputFormat::Json => {
                     // JSON envelope for programmatic use
                     let envelope = json_envelope(
@@ -857,13 +1028,18 @@ async fn run_client(
                     );
                     println!("{}", serde_json::to_string(&envelope)?);
                 }
-                OutputFormat::Pretty => {
-                    // Keep quiet for human use
-                }
+                // Keep text/pretty silent for fire-and-forget commands
+                OutputFormat::Text | OutputFormat::Pretty => {}
             }
         }
 
-        Command::Tail { id, lines, follow, raw, replay } => {
+        Command::Tail {
+            id,
+            lines,
+            follow,
+            raw,
+            replay,
+        } => {
             // --replay implies --follow and --raw
             let follow = follow || replay;
             let raw = raw || replay;
@@ -1040,7 +1216,10 @@ async fn run_client(
                         let diff_path = std::path::Path::new(&diff_file);
 
                         // Reject paths with .. components
-                        if diff_path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                        if diff_path
+                            .components()
+                            .any(|c| matches!(c, std::path::Component::ParentDir))
+                        {
                             return Err("path traversal not allowed (.. in path)".into());
                         }
 
@@ -1055,14 +1234,13 @@ async fn run_client(
                         }
 
                         // Show unified diff
-                        use similar::{ChangeTag, TextDiff};
-                        let diff = TextDiff::from_lines(&previous, &content);
+                        let diff = similar::TextDiff::from_lines(&previous, &content);
 
                         for change in diff.iter_all_changes() {
                             let sign = match change.tag() {
-                                ChangeTag::Delete => "-",
-                                ChangeTag::Insert => "+",
-                                ChangeTag::Equal => " ",
+                                similar::ChangeTag::Delete => "-",
+                                similar::ChangeTag::Insert => "+",
+                                similar::ChangeTag::Equal => " ",
                             };
                             print!("{sign}{change}");
                         }
@@ -1087,16 +1265,23 @@ async fn run_client(
 
             match response {
                 Response::Recording { agent_id, commands } => {
-                    let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+                    let fmt = resolve_format(if json {
+                        Some("json")
+                    } else {
+                        format.as_deref()
+                    });
                     match fmt {
                         OutputFormat::Text => {
                             // Text output: one line per command (timestamp, command type, payload)
                             for cmd in &commands {
-                                println!("{}", text_record(&[
-                                    &cmd.timestamp.to_string(),
-                                    &cmd.command,
-                                    &cmd.payload
-                                ]));
+                                println!(
+                                    "{}",
+                                    text_record(&[
+                                        &cmd.timestamp.to_string(),
+                                        &cmd.command,
+                                        &cmd.payload
+                                    ])
+                                );
                             }
                         }
                         OutputFormat::Json => {
@@ -1143,31 +1328,38 @@ async fn run_client(
         }
 
         Command::Env { id, format, json } => {
-            let fmt = resolve_format(if json { Some("json") } else { format.as_deref() });
+            let fmt = resolve_format(if json {
+                Some("json")
+            } else {
+                format.as_deref()
+            });
             let request = Request::GetEnv { id: id.clone() };
             let response = client.request(request).await?;
 
             match response {
-                Response::AgentEnv { id: agent_id, env } => {
-                    match fmt {
-                        OutputFormat::Json => {
-                            let map: serde_json::Map<String, serde_json::Value> = env.iter()
-                                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                                .collect();
-                            let envelope = json_envelope("agent_env", json!({
+                Response::AgentEnv { id: agent_id, env } => match fmt {
+                    OutputFormat::Json => {
+                        let map: serde_json::Map<String, serde_json::Value> = env
+                            .iter()
+                            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                            .collect();
+                        let envelope = json_envelope(
+                            "agent_env",
+                            json!({
                                 "id": agent_id,
                                 "env": map,
                                 "count": env.len(),
-                            }), vec![]);
-                            println!("{}", serde_json::to_string(&envelope)?);
-                        }
-                        _ => {
-                            for (key, value) in &env {
-                                println!("{key}={value}");
-                            }
+                            }),
+                            vec![],
+                        );
+                        println!("{}", serde_json::to_string(&envelope)?);
+                    }
+                    _ => {
+                        for (key, value) in &env {
+                            println!("{key}={value}");
                         }
                     }
-                }
+                },
                 Response::Error { message } => {
                     return Err(message.into());
                 }
@@ -1178,12 +1370,30 @@ async fn run_client(
         }
 
         // These commands are handled before this match
-        Command::Attach { .. } | Command::Server { .. } | Command::Doctor | Command::Events { .. } | Command::Subscribe { .. } | Command::View { .. } | Command::ResizePanes { .. } => {
+        Command::Attach { .. }
+        | Command::Server { .. }
+        | Command::Doctor
+        | Command::Events { .. }
+        | Command::Subscribe { .. }
+        | Command::View { .. }
+        | Command::ResizePanes { .. } => {
             unreachable!("handled above")
         }
 
-        Command::Resize { id, rows, cols, clear } => {
-            let response = client.request(Request::Resize { id, rows, cols, clear_transcript: clear }).await?;
+        Command::Resize {
+            id,
+            rows,
+            cols,
+            clear,
+        } => {
+            let response = client
+                .request(Request::Resize {
+                    id,
+                    rows,
+                    cols,
+                    clear_transcript: clear,
+                })
+                .await?;
 
             match response {
                 Response::Ok => {
@@ -1234,13 +1444,15 @@ async fn run_client(
                 return Err("--any requires --exited".into());
             }
             if ids.len() > 1 && (has_screen_conditions || print) {
-                return Err("--contains, --pattern, --stable, and --print require a single agent ID".into());
+                return Err(
+                    "--contains, --pattern, --stable, and --print require a single agent ID".into(),
+                );
             }
 
             if exited {
                 // Event-based approach: wait for agent(s) to exit
-                use vessel::protocol::Event;
                 use std::collections::HashMap;
+                use vessel::protocol::Event;
                 use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
                 use vessel::runtime::net::UnixStream;
 
@@ -1254,7 +1466,8 @@ async fn run_client(
 
                 // Track exit codes and which agents still need to exit
                 let mut exit_codes: HashMap<String, Option<i32>> = HashMap::new();
-                let mut pending: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut pending: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
 
                 for id in &ids {
                     let agent = agents.iter().find(|a| a.id == *id);
@@ -1269,7 +1482,7 @@ async fn run_client(
                     }
                 }
 
-                if !(any && !exit_codes.is_empty()) && !pending.is_empty() {
+                if (!any || exit_codes.is_empty()) && !pending.is_empty() {
                     // Subscribe to events and wait for remaining agents
                     let stream = UnixStream::connect(&socket_path_ref).await?;
                     let (reader, mut writer) = stream.into_split();
@@ -1285,23 +1498,22 @@ async fn run_client(
 
                     let mut line = String::new();
                     while !pending.is_empty() {
-                        if let Some(dl) = deadline {
-                            if Instant::now() >= dl {
-                                eprintln!("error: timeout waiting for agent(s) to exit");
-                                std::process::exit(1);
-                            }
+                        if let Some(dl) = deadline
+                            && Instant::now() >= dl
+                        {
+                            eprintln!("error: timeout waiting for agent(s) to exit");
+                            std::process::exit(1);
                         }
 
                         let read_fut = reader.read_line(&mut line);
                         let result = if let Some(dl) = deadline {
                             let remaining = dl - Instant::now();
-                            match vessel::runtime::time::timeout(remaining, read_fut).await {
-                                Ok(r) => r,
-                                Err(_) => {
+                            vessel::runtime::time::timeout(remaining, read_fut)
+                                .await
+                                .unwrap_or_else(|_| {
                                     eprintln!("error: timeout waiting for agent(s) to exit");
                                     std::process::exit(1);
-                                }
-                            }
+                                })
                         } else {
                             read_fut.await
                         };
@@ -1312,7 +1524,9 @@ async fn run_client(
                             Ok(_) => {
                                 let response: Response = serde_json::from_str(&line)?;
                                 match response {
-                                    Response::Event(Event::AgentExited { ref id, exit_code }) if pending.contains(id) => {
+                                    Response::Event(Event::AgentExited { ref id, exit_code })
+                                        if pending.contains(id) =>
+                                    {
                                         exit_codes.insert(id.clone(), exit_code);
                                         pending.remove(id);
                                         if any {
@@ -1371,11 +1585,11 @@ async fn run_client(
                             _ => return Err("unexpected response".into()),
                         };
 
-                        if let Some(ref needle) = contains {
-                            if !snapshot.contains(needle) {
-                                eprintln!("error: output does not contain: {needle:?}");
-                                std::process::exit(1);
-                            }
+                        if let Some(ref needle) = contains
+                            && !snapshot.contains(needle)
+                        {
+                            eprintln!("error: output does not contain: {needle:?}");
+                            std::process::exit(1);
                         }
 
                         if let Some(ref pat) = pattern {
@@ -1420,10 +1634,10 @@ async fn run_client(
                 let mut stable_since = Instant::now();
 
                 loop {
-                    if let Some(dl) = deadline {
-                        if Instant::now() >= dl {
-                            return Err("timeout waiting for condition".into());
-                        }
+                    if let Some(dl) = deadline
+                        && Instant::now() >= dl
+                    {
+                        return Err("timeout waiting for condition".into());
                     }
 
                     let response = client
@@ -1540,38 +1754,38 @@ async fn run_client(
                 loop {
                     // Check all conditions
                     let mut all_passed = true;
+                    // Reassigned across several sequential checks below, so this
+                    // cannot collapse into a single `let = if/else`.
+                    #[allow(clippy::useless_let_if_seq)]
                     let mut failure_reason = String::new();
 
                     // Check contains
-                    if let Some(ref needle) = contains {
-                        if !snapshot.contains(needle) {
-                            all_passed = false;
-                            failure_reason = format!("expected output to contain: {needle:?}");
-                        }
+                    if let Some(ref needle) = contains
+                        && !snapshot.contains(needle)
+                    {
+                        all_passed = false;
+                        failure_reason = format!("expected output to contain: {needle:?}");
                     }
 
                     // Check not_contains
-                    if all_passed {
-                        if let Some(ref needle) = not_contains {
-                            if snapshot.contains(needle) {
-                                all_passed = false;
-                                failure_reason = format!("expected output NOT to contain: {needle:?}");
-                            }
-                        }
+                    if all_passed
+                        && let Some(ref needle) = not_contains
+                        && snapshot.contains(needle)
+                    {
+                        all_passed = false;
+                        failure_reason = format!("expected output NOT to contain: {needle:?}");
                     }
 
                     // Check pattern
-                    if all_passed {
-                        if let Some(ref pat) = pattern {
-                            // Limit pattern length to mitigate ReDoS
-                            if pat.len() > 1000 {
-                                return Err("regex pattern too long (max 1000 chars)".into());
-                            }
-                            let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
-                            if !re.is_match(&snapshot) {
-                                all_passed = false;
-                                failure_reason = format!("expected output to match pattern: {pat:?}");
-                            }
+                    if all_passed && let Some(ref pat) = pattern {
+                        // Limit pattern length to mitigate ReDoS
+                        if pat.len() > 1000 {
+                            return Err("regex pattern too long (max 1000 chars)".into());
+                        }
+                        let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
+                        if !re.is_match(&snapshot) {
+                            all_passed = false;
+                            failure_reason = format!("expected output to match pattern: {pat:?}");
                         }
                     }
 
@@ -1605,38 +1819,38 @@ async fn run_client(
             } else {
                 // No timeout - check immediately
                 let mut all_passed = true;
+                // Reassigned across several sequential checks below, so this
+                // cannot collapse into a single `let = if/else`.
+                #[allow(clippy::useless_let_if_seq)]
                 let mut failure_reason = String::new();
 
                 // Check contains
-                if let Some(ref needle) = contains {
-                    if !snapshot.contains(needle) {
-                        all_passed = false;
-                        failure_reason = format!("expected output to contain: {needle:?}");
-                    }
+                if let Some(ref needle) = contains
+                    && !snapshot.contains(needle)
+                {
+                    all_passed = false;
+                    failure_reason = format!("expected output to contain: {needle:?}");
                 }
 
                 // Check not_contains
-                if all_passed {
-                    if let Some(ref needle) = not_contains {
-                        if snapshot.contains(needle) {
-                            all_passed = false;
-                            failure_reason = format!("expected output NOT to contain: {needle:?}");
-                        }
-                    }
+                if all_passed
+                    && let Some(ref needle) = not_contains
+                    && snapshot.contains(needle)
+                {
+                    all_passed = false;
+                    failure_reason = format!("expected output NOT to contain: {needle:?}");
                 }
 
                 // Check pattern
-                if all_passed {
-                    if let Some(ref pat) = pattern {
-                        // Limit pattern length to mitigate ReDoS
-                        if pat.len() > 1000 {
-                            return Err("regex pattern too long (max 1000 chars)".into());
-                        }
-                        let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
-                        if !re.is_match(&snapshot) {
-                            all_passed = false;
-                            failure_reason = format!("expected output to match pattern: {pat:?}");
-                        }
+                if all_passed && let Some(ref pat) = pattern {
+                    // Limit pattern length to mitigate ReDoS
+                    if pat.len() > 1000 {
+                        return Err("regex pattern too long (max 1000 chars)".into());
+                    }
+                    let re = Regex::new(pat).map_err(|e| format!("invalid regex: {e}"))?;
+                    if !re.is_match(&snapshot) {
+                        all_passed = false;
+                        failure_reason = format!("expected output to match pattern: {pat:?}");
                     }
                 }
 
@@ -1798,22 +2012,23 @@ async fn run_client(
                         if let Some(code_end) = after_marker[code_start..].find("__") {
                             let code_str = &after_marker[code_start..code_start + code_end];
                             if let Ok(code) = code_str.parse::<i32>()
-                                && code != 0 {
-                                    // Kill agent, print output, then exit with the command's exit code
-                                    let _ = client
-                                        .request(Request::Kill {
-                                            id: Some(agent_id.clone()),
-                                            labels: vec![],
-                                            all: false,
-                                            signal: 9,
-                                            proc_filter: None,
-                                        })
-                                        .await;
-                                    if !output.is_empty() {
-                                        println!("{output}");
-                                    }
-                                    std::process::exit(code);
+                                && code != 0
+                            {
+                                // Kill agent, print output, then exit with the command's exit code
+                                let _ = client
+                                    .request(Request::Kill {
+                                        id: Some(agent_id.clone()),
+                                        labels: vec![],
+                                        all: false,
+                                        signal: 9,
+                                        proc_filter: None,
+                                    })
+                                    .await;
+                                if !output.is_empty() {
+                                    println!("{output}");
                                 }
+                                std::process::exit(code);
+                            }
                         }
                     }
                     break;
@@ -1871,7 +2086,8 @@ async fn run_attach_command(
                     let _ = server.run().await;
                 });
                 // Give server time to start
-                vessel::runtime::time::sleep(vessel::runtime::time::Duration::from_millis(100)).await;
+                vessel::runtime::time::sleep(vessel::runtime::time::Duration::from_millis(100))
+                    .await;
                 UnixStream::connect(&socket_path).await?
             } else {
                 return Err(e.into());
@@ -1963,6 +2179,9 @@ async fn run_events_command(
     Ok(())
 }
 
+// Sequential connect/subscribe/event-loop flow read top-to-bottom; extracting
+// pieces would only obscure the streaming protocol handling.
+#[allow(clippy::too_many_lines)]
 async fn run_subscribe_command(
     socket_path: std::path::PathBuf,
     ids: Vec<String>,
@@ -1987,17 +2206,19 @@ async fn run_subscribe_command(
     // If we have labels, first get the list of matching agent IDs
     // Then subscribe to events for those specific IDs
     let mut filter_ids = ids.clone();
-    
+
     if !labels.is_empty() {
         // Get current agents matching the labels
-        let list_request = Request::List { labels: labels.clone() };
+        let list_request = Request::List {
+            labels: labels.clone(),
+        };
         let mut json = serde_json::to_string(&list_request)?;
         json.push('\n');
         writer.write_all(json.as_bytes()).await?;
-        
+
         let mut line = String::new();
         reader.read_line(&mut line).await?;
-        
+
         match serde_json::from_str::<Response>(&line)? {
             Response::Agents { agents } => {
                 for agent in agents {
@@ -2024,7 +2245,7 @@ async fn run_subscribe_command(
     // Process events
     let mut line = String::new();
     let jsonl_format = format == "jsonl";
-    
+
     loop {
         line.clear();
         let n = reader.read_line(&mut line).await?;
@@ -2060,15 +2281,20 @@ async fn run_subscribe_command(
                         std::io::Write::flush(&mut std::io::stdout())?;
                     }
                 }
-                Response::Event(Event::AgentSpawned { id, labels: agent_labels, .. }) => {
+                Response::Event(Event::AgentSpawned {
+                    id,
+                    labels: agent_labels,
+                    ..
+                }) => {
                     // If we're filtering by labels and a new agent matches, add it to our filter
-                    if !labels.is_empty() && labels.iter().all(|l| agent_labels.contains(l)) {
-                        if !filter_ids.contains(&id) {
-                            filter_ids.push(id.clone());
-                            // Note: We can't dynamically update the filter on existing connection
-                            // The new agent will be picked up if we reconnect
-                            eprintln!("[subscribe] new agent matches labels: {}", id);
-                        }
+                    if !labels.is_empty()
+                        && labels.iter().all(|l| agent_labels.contains(l))
+                        && !filter_ids.contains(&id)
+                    {
+                        filter_ids.push(id.clone());
+                        // Note: We can't dynamically update the filter on existing connection
+                        // The new agent will be picked up if we reconnect
+                        eprintln!("[subscribe] new agent matches labels: {id}");
                     }
                 }
                 Response::Event(Event::AgentExited { id, exit_code }) => {
@@ -2088,7 +2314,7 @@ async fn run_subscribe_command(
                     }
                     // Remove from filter
                     filter_ids.retain(|i| i != &id);
-                    
+
                     // If no more agents to watch, exit
                     if filter_ids.is_empty() {
                         break;
@@ -2105,6 +2331,9 @@ async fn run_subscribe_command(
     Ok(())
 }
 
+// Sets up the tmux view step by step (session, panes, hooks, attach); the
+// ordered side effects are clearest kept inline.
+#[allow(clippy::too_many_lines)]
 async fn run_view_command(
     socket_path: std::path::PathBuf,
     mux: String,
@@ -2123,14 +2352,16 @@ async fn run_view_command(
     }
 
     // Parse view mode
-    let view_mode = ViewMode::from_str(&mode)?;
+    let view_mode = ViewMode::parse(&mode)?;
 
     // Check tmux is available
     TmuxView::check_tmux()?;
 
     // Get the path to our own binary
-    let vessel_path = std::env::current_exe()
-        .map_or_else(|_| "vessel".to_string(), |p| p.to_string_lossy().to_string());
+    let vessel_path = std::env::current_exe().map_or_else(
+        |_| "vessel".to_string(),
+        |p| p.to_string_lossy().to_string(),
+    );
 
     let mut view = TmuxView::with_mode(vessel_path.clone(), view_mode);
 
@@ -2148,20 +2379,21 @@ async fn run_view_command(
                         .arg("server")
                         .arg("--daemon")
                         .spawn()?;
-                    
+
                     // Wait for server to be ready (exponential backoff: 50ms → 500ms cap)
                     let mut connected = None;
                     let mut delay_ms = 50u64;
                     for _ in 0..20 {
-                        vessel::runtime::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        vessel::runtime::time::sleep(std::time::Duration::from_millis(delay_ms))
+                            .await;
                         if let Ok(s) = UnixStream::connect(&socket_path).await {
                             connected = Some(s);
                             break;
                         }
                         delay_ms = (delay_ms * 2).min(500);
                     }
-                    connected.ok_or_else(|| -> Box<dyn std::error::Error> { 
-                        "server did not start in time".into() 
+                    connected.ok_or_else(|| -> Box<dyn std::error::Error> {
+                        "server did not start in time".into()
                     })?
                 }
                 _ => {
@@ -2175,14 +2407,16 @@ async fn run_view_command(
     let mut reader = BufReader::new(reader);
 
     // Get the list of current agents (optionally filtered by labels)
-    let list_request = Request::List { labels: labels.clone() };
+    let list_request = Request::List {
+        labels: labels.clone(),
+    };
     let mut json = serde_json::to_string(&list_request)?;
     json.push('\n');
     writer.write_all(json.as_bytes()).await?;
 
     let mut line = String::new();
     reader.read_line(&mut line).await?;
-    
+
     let current_agents: Vec<vessel::AgentInfo> = match serde_json::from_str::<Response>(&line)? {
         Response::Agents { agents } => agents
             .into_iter()
@@ -2207,7 +2441,8 @@ async fn run_view_command(
 
         // Add panes for agents that are running but don't have a pane yet
         // (spawned while we were detached)
-        let running_ids: std::collections::HashSet<&str> = current_agents.iter().map(|a| a.id.as_str()).collect();
+        let running_ids: std::collections::HashSet<&str> =
+            current_agents.iter().map(|a| a.id.as_str()).collect();
         for agent in &current_agents {
             if !existing_panes.contains(&agent.id) {
                 view.add_pane(&agent.id)?;
@@ -2221,7 +2456,11 @@ async fn run_view_command(
         if let Ok(dead_panes) = view.find_dead_panes() {
             for (pane_id, agent_id) in &dead_panes {
                 if running_ids.contains(agent_id.as_str()) {
-                    tracing::info!("Respawning dead pane {} for running agent {}", pane_id, agent_id);
+                    tracing::info!(
+                        "Respawning dead pane {} for running agent {}",
+                        pane_id,
+                        agent_id
+                    );
                     if let Err(e) = view.respawn_pane(pane_id, agent_id) {
                         tracing::warn!("Failed to respawn pane for {}: {}", agent_id, e);
                     }
@@ -2303,7 +2542,9 @@ async fn run_view_command(
             .count();
 
         if running_count == 0 {
-            tracing::info!("No agents running after detach - shutting down server and cleaning up tmux session");
+            tracing::info!(
+                "No agents running after detach - shutting down server and cleaning up tmux session"
+            );
 
             // Request server shutdown
             let _ = client.request(Request::Shutdown).await;
@@ -2313,7 +2554,9 @@ async fn run_view_command(
                 .args(["kill-session", "-t", "vessel"])
                 .status();
         } else {
-            tracing::debug!("Agents still running after detach - leaving server and session active");
+            tracing::debug!(
+                "Agents still running after detach - leaving server and session active"
+            );
         }
     }
 
@@ -2335,11 +2578,13 @@ async fn run_view_event_loop(
     let mut reader = BufReader::new(reader);
 
     // Get vessel path
-    let vessel_path = std::env::current_exe()
-        .map_or_else(|_| "vessel".to_string(), |p| p.to_string_lossy().to_string());
+    let vessel_path = std::env::current_exe().map_or_else(
+        |_| "vessel".to_string(),
+        |p| p.to_string_lossy().to_string(),
+    );
 
     let mut view = TmuxView::with_mode(vessel_path, mode);
-    
+
     // Initialize with existing agents so we track them properly
     for agent_id in existing_agents {
         view.mark_pane_exists(&agent_id);
@@ -2366,7 +2611,12 @@ async fn run_view_event_loop(
 
         if let Ok(response) = serde_json::from_str::<Response>(&line) {
             match response {
-                Response::Event(Event::AgentSpawned { id, command, labels, .. }) => {
+                Response::Event(Event::AgentSpawned {
+                    id,
+                    command,
+                    labels,
+                    ..
+                }) => {
                     let was_empty = view.is_empty();
                     if let Err(e) = view.add_pane(&id) {
                         if !view.session_exists() {
@@ -2378,14 +2628,12 @@ async fn run_view_event_loop(
                     view.set_pane_metadata(&id, &command.join(" "), &labels);
                     // When transitioning from placeholder to first real pane,
                     // retile so it fills the window properly
-                    if was_empty {
-                        if let Err(e) = view.retile() {
-                            if !view.session_exists() {
-                                tracing::info!("tmux session gone, exiting event loop");
-                                break;
-                            }
-                            tracing::warn!("Failed to retile after placeholder transition: {}", e);
+                    if was_empty && let Err(e) = view.retile() {
+                        if !view.session_exists() {
+                            tracing::info!("tmux session gone, exiting event loop");
+                            break;
                         }
+                        tracing::warn!("Failed to retile after placeholder transition: {}", e);
                     }
                 }
                 Response::Event(Event::AgentExited { id, .. }) => {
@@ -2401,14 +2649,12 @@ async fn run_view_event_loop(
                             }
                             tracing::warn!("Failed to show placeholder: {}", e);
                         }
-                    } else {
-                        if let Err(e) = view.remove_pane(&id) {
-                            if !view.session_exists() {
-                                tracing::info!("tmux session gone, exiting event loop");
-                                break;
-                            }
-                            tracing::warn!("Failed to remove pane for {}: {}", id, e);
+                    } else if let Err(e) = view.remove_pane(&id) {
+                        if !view.session_exists() {
+                            tracing::info!("tmux session gone, exiting event loop");
+                            break;
                         }
+                        tracing::warn!("Failed to remove pane for {}: {}", id, e);
                     }
                 }
                 Response::Error { message } => {
@@ -2426,14 +2672,17 @@ async fn run_view_event_loop(
 ///
 /// - `after`: Wait for these agents to exit
 /// - `wait_for`: Wait for pattern match in agent output. Format: "agent-id" or "agent-id:regex"
+// Polls two dependency lists with shared deadline/timeout bookkeeping; keeping
+// the loop inline preserves the readable wait sequence.
+#[allow(clippy::too_many_lines)]
 async fn wait_for_dependencies(
     socket_path: &std::path::Path,
     after: &[String],
     wait_for: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use vessel::protocol::Event;
     use regex::Regex;
     use std::collections::{HashMap, HashSet};
+    use vessel::protocol::Event;
     use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use vessel::runtime::net::UnixStream;
 
@@ -2441,8 +2690,8 @@ async fn wait_for_dependencies(
     let mut pattern_waits: HashMap<String, Option<Regex>> = HashMap::new();
     for spec in wait_for {
         if let Some((agent_id, pattern)) = spec.split_once(':') {
-            let regex = Regex::new(pattern)
-                .map_err(|e| format!("invalid pattern '{}': {}", pattern, e))?;
+            let regex =
+                Regex::new(pattern).map_err(|e| format!("invalid pattern '{pattern}': {e}"))?;
             pattern_waits.insert(agent_id.to_string(), Some(regex));
         } else {
             // No pattern - wait for any output
@@ -2491,12 +2740,12 @@ async fn wait_for_dependencies(
     let agent_ids: HashSet<_> = agents.iter().map(|a| a.id.as_str()).collect();
     for id in &waiting_for_exit {
         if !agent_ids.contains(id.as_str()) {
-            return Err(format!("--after: agent '{}' not found", id).into());
+            return Err(format!("--after: agent '{id}' not found").into());
         }
     }
     for id in waiting_for_pattern.keys() {
         if !agent_ids.contains(id.as_str()) {
-            return Err(format!("--wait-for: agent '{}' not found", id).into());
+            return Err(format!("--wait-for: agent '{id}' not found").into());
         }
     }
 
@@ -2540,10 +2789,10 @@ async fn wait_for_dependencies(
             Response::Event(Event::AgentOutput { id, data }) => {
                 if let Some(pattern_opt) = waiting_for_pattern.get(&id) {
                     let output = String::from_utf8_lossy(&data);
-                    let matched = match pattern_opt {
-                        Some(regex) => regex.is_match(&output),
-                        None => true, // Any output matches
-                    };
+                    // None means any output matches.
+                    let matched = pattern_opt
+                        .as_ref()
+                        .is_none_or(|regex| regex.is_match(&output));
                     if matched {
                         tracing::debug!("Dependency satisfied: {} matched pattern", id);
                         waiting_for_pattern.remove(&id);
@@ -2551,7 +2800,7 @@ async fn wait_for_dependencies(
                 }
             }
             Response::Error { message } => {
-                return Err(format!("error while waiting: {}", message).into());
+                return Err(format!("error while waiting: {message}").into());
             }
             _ => {}
         }
@@ -2565,18 +2814,21 @@ async fn wait_for_dependencies(
 }
 
 /// Set up tmux hooks to resize agents when panes change.
+// Returns `Result` to match the fallible setup-hook family and keep `?` at call
+// sites; the body is currently infallible but the signature is part of the API.
+#[allow(clippy::unnecessary_wraps)]
 fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
     use std::process::Command;
-    
+
     let vessel_path = view.vessel_path();
     let session_name = "vessel";
-    let session_window = format!("{}:agents", session_name);
-    
+    let session_window = format!("{session_name}:agents");
+
     // Hook command: call vessel resize-panes when any pane is resized
     // The hook runs asynchronously (-b) so it won't block tmux
-    let hook_cmd = format!("{} resize-panes --mode={}", vessel_path, mode);
-    let run_shell = format!("run-shell -b '{}'", hook_cmd);
-    
+    let hook_cmd = format!("{vessel_path} resize-panes --mode={mode}");
+    let run_shell = format!("run-shell -b '{hook_cmd}'");
+
     // Session-level hook: after-resize-pane (fires when individual panes are resized)
     let _ = Command::new("tmux")
         .args([
@@ -2587,7 +2839,7 @@ fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
             &run_shell,
         ])
         .status();
-    
+
     // Session-level hook: client-attached (fires when a client attaches to the session)
     let _ = Command::new("tmux")
         .args([
@@ -2598,7 +2850,7 @@ fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
             &run_shell,
         ])
         .status();
-    
+
     // Session-level hook: client-session-changed (fires when switching to this session)
     let _ = Command::new("tmux")
         .args([
@@ -2609,18 +2861,12 @@ fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
             &run_shell,
         ])
         .status();
-    
+
     // Session-level hook: client-resized (fires when the terminal window is resized)
     let _ = Command::new("tmux")
-        .args([
-            "set-hook",
-            "-t",
-            session_name,
-            "client-resized",
-            &run_shell,
-        ])
+        .args(["set-hook", "-t", session_name, "client-resized", &run_shell])
         .status();
-    
+
     // Window-level hook: window-layout-changed (fires when layout changes, e.g., after split/close)
     // Note: requires -w flag for window-level hooks
     let _ = Command::new("tmux")
@@ -2645,6 +2891,8 @@ fn setup_resize_hook(view: &TmuxView, mode: &str) -> Result<(), ViewError> {
 /// (if it's the last pane, to keep the session alive).
 ///
 /// Scoped to the vessel session — does not affect other tmux sessions.
+// Infallible today, but kept fallible to match the setup-hook family API.
+#[allow(clippy::unnecessary_wraps)]
 fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     use std::process::Command;
 
@@ -2654,10 +2902,7 @@ fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     // Enable remain-on-exit so pane-died hook fires (instead of pane being
     // destroyed immediately, which would skip the hook entirely)
     let _ = Command::new("tmux")
-        .args([
-            "set-option", "-t", session_name,
-            "remain-on-exit", "on",
-        ])
+        .args(["set-option", "-t", session_name, "remain-on-exit", "on"])
         .status();
 
     // pane-died hook: try to respawn the attach process if the agent is still running.
@@ -2680,18 +2925,14 @@ fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
     let hook_cmd = format!(
         "run-shell 'AID=\"#{{@agent_id}}\"; \
          if [ -n \"$AID\" ]; then \
-           tmux respawn-pane -k -t \"#{{pane_id}}\" \"{vessel} attach --readonly \\\"$AID\\\" || sleep 2\"; \
+           tmux respawn-pane -k -t \"#{{pane_id}}\" \"{vessel_path} attach --readonly \\\"$AID\\\" || sleep 2\"; \
          elif [ \"#{{window_panes}}\" = \"1\" ]; then \
            tmux respawn-pane -k -t \"#{{pane_id}}\" \"printf \\\"\\033[2J\\033[H\\033[90mWaiting for agents...\\033[0m\\\"; sleep 3600\"; \
-         fi'",
-        vessel = vessel_path
+         fi'"
     );
 
     let _ = Command::new("tmux")
-        .args([
-            "set-hook", "-t", session_name,
-            "pane-died", &hook_cmd,
-        ])
+        .args(["set-hook", "-t", session_name, "pane-died", &hook_cmd])
         .status();
 
     Ok(())
@@ -2702,6 +2943,11 @@ fn setup_pane_died_hook(view: &TmuxView) -> Result<(), ViewError> {
 /// Creates aliases like `vessel-menu`, `vessel-list`, `vessel-snapshot`, etc.
 /// that can be invoked from the tmux command prompt (prefix+:) in any session.
 /// Also binds Ctrl+P to `vessel-menu`, scoped to the vessel session via if-shell.
+// Infallible today, but kept fallible to match the setup-hook family API.
+#[allow(clippy::unnecessary_wraps)]
+// The "#{...}" tokens are tmux format-string syntax passed to the tmux binary,
+// not Rust formatting args.
+#[allow(clippy::literal_string_with_formatting_args)]
 fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
     use std::process::Command;
 
@@ -2710,27 +2956,26 @@ fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
 
     // Register tmux command aliases (server-level, available from any session)
     let list_alias = format!(
-        "vessel-list=display-popup -h 75% -w 80% -E '{} list --format text | less -R'",
-        vessel_path
+        "vessel-list=display-popup -h 75% -w 80% -E '{vessel_path} list --format text | less -R'"
     );
     let snapshot_alias = format!(
-        "vessel-snapshot=display-popup -h 75% -w 80% -E '{} snapshot --raw #{{@agent_id}} | less -R'",
-        vessel_path
+        "vessel-snapshot=display-popup -h 75% -w 80% -E '{vessel_path} snapshot --raw #{{@agent_id}} | less -R'"
     );
-    let shutdown_alias = format!(
-        "vessel-shutdown=display-popup -E '{} shutdown && tmux detach-client'",
-        vessel_path
-    );
+    let shutdown_alias =
+        format!("vessel-shutdown=display-popup -E '{vessel_path} shutdown && tmux detach-client'");
 
     let aliases: &[(&str, &str)] = &[
-        ("command-alias[100]", "vessel-menu=display-menu -T '#[align=centre]vessel' \
+        (
+            "command-alias[100]",
+            "vessel-menu=display-menu -T '#[align=centre]vessel' \
             'List Agents' l vessel-list \
             'Snapshot Pane' s vessel-snapshot \
             '' '' '' \
             'Refresh Layout' r vessel-refresh \
             '' '' '' \
             'Detach' d detach-client \
-            'Shutdown' S vessel-shutdown"),
+            'Shutdown' S vessel-shutdown",
+        ),
         ("command-alias[101]", &list_alias),
         ("command-alias[102]", &snapshot_alias),
         ("command-alias[103]", &shutdown_alias),
@@ -2746,8 +2991,13 @@ fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
     // Bind Ctrl+P scoped to vessel session: shows menu in vessel, passes through elsewhere
     let _ = Command::new("tmux")
         .args([
-            "bind-key", "-T", "root", "C-p",
-            "if-shell", "-F", "#{==:#{session_name},vessel}",
+            "bind-key",
+            "-T",
+            "root",
+            "C-p",
+            "if-shell",
+            "-F",
+            "#{==:#{session_name},vessel}",
             "vessel-menu",
             "send-keys C-p",
         ])
@@ -2757,8 +3007,10 @@ fn setup_command_palette(view: &TmuxView) -> Result<(), ViewError> {
     let _ = Command::new("tmux")
         .args([
             "display-message",
-            "-t", session_name,
-            "-d", "3000",
+            "-t",
+            session_name,
+            "-d",
+            "3000",
             "vessel view — Ctrl+P for menu, or prefix+: then vessel-<tab>",
         ])
         .status();
@@ -2793,14 +3045,15 @@ async fn resize_agents_to_panes(
     let mut line = String::new();
     reader.read_line(&mut line).await?;
 
-    let no_resize_ids: std::collections::HashSet<String> = match serde_json::from_str::<Response>(&line)? {
-        Response::Agents { agents } => agents
-            .into_iter()
-            .filter(|a| a.no_resize)
-            .map(|a| a.id)
-            .collect(),
-        _ => std::collections::HashSet::new(),
-    };
+    let no_resize_ids: std::collections::HashSet<String> =
+        match serde_json::from_str::<Response>(&line)? {
+            Response::Agents { agents } => agents
+                .into_iter()
+                .filter(|a| a.no_resize)
+                .map(|a| a.id)
+                .collect(),
+            _ => std::collections::HashSet::new(),
+        };
 
     for (agent_id, (rows, cols)) in pane_sizes {
         if no_resize_ids.contains(&agent_id) {
@@ -2813,7 +3066,7 @@ async fn resize_agents_to_panes(
             cols,
             clear_transcript: true, // Clear to avoid displaying old-size output
         };
-        
+
         let mut json = serde_json::to_string(&request)?;
         json.push('\n');
         writer.write_all(json.as_bytes()).await?;
@@ -2823,7 +3076,12 @@ async fn resize_agents_to_panes(
 
         match serde_json::from_str::<Response>(&line)? {
             Response::Ok => {
-                tracing::debug!("Resized {} to {}x{} (cleared transcript)", agent_id, rows, cols);
+                tracing::debug!(
+                    "Resized {} to {}x{} (cleared transcript)",
+                    agent_id,
+                    rows,
+                    cols
+                );
             }
             Response::Error { message } => {
                 tracing::warn!("Failed to resize {}: {}", agent_id, message);
@@ -2844,15 +3102,17 @@ async fn run_resize_panes_command(
     use vessel::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use vessel::runtime::net::UnixStream;
 
-    let view_mode = ViewMode::from_str(&mode)?;
-    
+    let view_mode = ViewMode::parse(&mode)?;
+
     // Get path to our binary
-    let vessel_path = std::env::current_exe()
-        .map_or_else(|_| "vessel".to_string(), |p| p.to_string_lossy().to_string());
+    let vessel_path = std::env::current_exe().map_or_else(
+        |_| "vessel".to_string(),
+        |p| p.to_string_lossy().to_string(),
+    );
 
     // Create a view instance to query pane sizes
     let mut view = TmuxView::with_mode(vessel_path.clone(), view_mode);
-    
+
     // First, get the list of running agents to populate active_panes
     let stream = UnixStream::connect(&socket_path).await?;
     let (reader, mut writer) = stream.into_split();
@@ -2884,10 +3144,10 @@ async fn run_resize_panes_command(
 
     // Get pane sizes and resize agents to match
     let pane_sizes = view.get_pane_sizes()?;
-    
+
     // Build a map of agent_id -> pid for SIGWINCH
     let agent_pids: std::collections::HashMap<String, u32> = agents.iter().cloned().collect();
-    
+
     for (agent_id, (rows, cols)) in &pane_sizes {
         // Don't clear transcript - let the running tail continue and programs
         // will redraw themselves when they receive SIGWINCH from the resize
@@ -2897,7 +3157,7 @@ async fn run_resize_panes_command(
             cols: *cols,
             clear_transcript: false,
         };
-        
+
         let mut json = serde_json::to_string(&request)?;
         json.push('\n');
         writer.write_all(json.as_bytes()).await?;
@@ -2905,24 +3165,27 @@ async fn run_resize_panes_command(
         let mut line = String::new();
         reader.read_line(&mut line).await?;
 
-        if let Ok(Response::Ok) = serde_json::from_str::<Response>(&line) {
+        if matches!(serde_json::from_str::<Response>(&line), Ok(Response::Ok)) {
             tracing::debug!("Resized {} to {}x{}", agent_id, rows, cols);
         }
     }
-    
+
     // Give a brief moment for the PTY resize to propagate
     vessel::runtime::time::sleep(std::time::Duration::from_millis(50)).await;
-    
+
     // Send explicit SIGWINCH to each agent process to ensure they redraw
     // Some TUI programs (like btop) need this extra signal to reliably redraw
     for (agent_id, (_, _)) in &pane_sizes {
         if let Some(&pid) = agent_pids.get(agent_id) {
-            // Send SIGWINCH (28) to the process
-            let _ = vessel::sys::kill(pid as i32, libc::SIGWINCH);
+            // Send SIGWINCH (28) to the process. Process IDs always fit in a
+            // positive i32 on supported platforms, so this cast never wraps.
+            #[allow(clippy::cast_possible_wrap)]
+            let signed_pid = pid as i32;
+            let _ = vessel::sys::kill(signed_pid, libc::SIGWINCH);
             tracing::debug!("Sent SIGWINCH to {} (pid {})", agent_id, pid);
         }
     }
-    
+
     // With attach --readonly, we don't need to respawn panes.
     // The attach is already streaming live PTY output, so when the TUI
     // program redraws after SIGWINCH, the attach passes it through directly.

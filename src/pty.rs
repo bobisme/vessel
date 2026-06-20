@@ -9,11 +9,11 @@
 
 #![allow(unsafe_code)]
 
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
-use nix::pty::{openpty, OpenptyResult, Winsize};
+use nix::fcntl::{FcntlArg, OFlag, fcntl};
+use nix::pty::{OpenptyResult, Winsize, openpty};
 use nix::sys::signal::{self, Signal};
-use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
-use nix::unistd::{execvp, fork, setsid, ForkResult, Pid};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::{ForkResult, Pid, execvp, fork, setsid};
 use std::ffi::CString;
 use std::os::unix::io::{AsRawFd, OwnedFd, RawFd};
 use thiserror::Error;
@@ -121,13 +121,13 @@ impl PtyProcess {
 /// These are captured from the server's environment at spawn time.
 /// Explicit `--env` values override these.
 const ESSENTIAL_ENV_VARS: &[&str] = &[
-    "PATH",                    // command resolution
-    "HOME",                    // home directory
-    "USER",                    // current user
-    "TERM",                    // terminal type (critical for PTY)
-    "SHELL",                   // default shell
-    "LANG",                    // locale / character encoding
-    "XDG_RUNTIME_DIR",         // systemd, D-Bus, Wayland sockets
+    "PATH",                     // command resolution
+    "HOME",                     // home directory
+    "USER",                     // current user
+    "TERM",                     // terminal type (critical for PTY)
+    "SHELL",                    // default shell
+    "LANG",                     // locale / character encoding
+    "XDG_RUNTIME_DIR",          // systemd, D-Bus, Wayland sockets
     "DBUS_SESSION_BUS_ADDRESS", // systemd-run --user needs session bus
 ];
 
@@ -280,23 +280,22 @@ pub fn spawn_with_env(
             }
 
             // Change working directory if requested
-            if let Some(dir) = cwd {
-                if std::env::set_current_dir(dir).is_err() {
-                    unsafe { libc::_exit(1) };
-                }
+            if let Some(dir) = cwd
+                && std::env::set_current_dir(dir).is_err()
+            {
+                unsafe { libc::_exit(1) };
             }
 
             // Convert command to CStrings — _exit on failure
             let Ok(prog) = CString::new(cmd[0].as_str()) else {
                 unsafe { libc::_exit(1) };
             };
-            let args: Vec<CString> = match cmd
+            let Ok(args) = cmd
                 .iter()
                 .map(|s| CString::new(s.as_str()))
-                .collect::<Result<_, _>>()
-            {
-                Ok(args) => args,
-                Err(_) => unsafe { libc::_exit(1) },
+                .collect::<Result<Vec<CString>, _>>()
+            else {
+                unsafe { libc::_exit(1) };
             };
 
             // Exec the command — only returns on error

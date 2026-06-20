@@ -36,7 +36,11 @@ pub enum ViewMode {
 
 impl ViewMode {
     /// Parse mode from string.
-    pub fn from_str(s: &str) -> Result<Self, ViewError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ViewError::UnsupportedMode`] if `s` is not a recognized mode.
+    pub fn parse(s: &str) -> Result<Self, ViewError> {
         match s.to_lowercase().as_str() {
             "panes" | "pane" => Ok(Self::Panes),
             "windows" | "window" | "tabs" | "tab" => Ok(Self::Windows),
@@ -90,8 +94,7 @@ impl TmuxView {
         Command::new("tmux")
             .args(["has-session", "-t", &self.session_name])
             .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+            .is_ok_and(|o| o.status.success())
     }
 
     /// Ensure remain-on-exit is set on the agents window.
@@ -109,7 +112,7 @@ impl TmuxView {
             .status();
 
         if let Err(e) = status {
-            eprintln!("Warning: failed to set remain-on-exit: {}", e);
+            eprintln!("Warning: failed to set remain-on-exit: {e}");
         }
     }
 
@@ -140,8 +143,12 @@ impl TmuxView {
         let session_window = format!("{}:agents", self.session_name);
         let _ = Command::new("tmux")
             .args([
-                "set-option", "-w", "-t", &session_window,
-                "pane-border-status", "top",
+                "set-option",
+                "-w",
+                "-t",
+                &session_window,
+                "pane-border-status",
+                "top",
             ])
             .status();
 
@@ -149,12 +156,15 @@ impl TmuxView {
         // Agent name in orange (#fab387), rest in default color
         // Uses @agent_id, @agent_command, @agent_labels pane options
         #[allow(clippy::literal_string_with_formatting_args)]
-        let border_format =
-            "#{?pane_active,#[reverse],}#[fg=#fab387] #{@agent_id} #[default]#{?#{@agent_command}, #{@agent_command},}#{?#{@agent_labels}, [#{@agent_labels}],} ";
+        let border_format = "#{?pane_active,#[reverse],}#[fg=#fab387] #{@agent_id} #[default]#{?#{@agent_command}, #{@agent_command},}#{?#{@agent_labels}, [#{@agent_labels}],} ";
         let _ = Command::new("tmux")
             .args([
-                "set-option", "-w", "-t", &session_window,
-                "pane-border-format", border_format,
+                "set-option",
+                "-w",
+                "-t",
+                &session_window,
+                "pane-border-format",
+                border_format,
             ])
             .status();
 
@@ -173,27 +183,41 @@ impl TmuxView {
                 .args(["list-panes", "-t", &session_window, "-F", format_str])
                 .output(),
             ViewMode::Windows => Command::new("tmux")
-                .args(["list-panes", "-s", "-t", &self.session_name, "-F", format_str])
+                .args([
+                    "list-panes",
+                    "-s",
+                    "-t",
+                    &self.session_name,
+                    "-F",
+                    format_str,
+                ])
                 .output(),
         };
-        if let Ok(output) = output {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    if let Some((pane_id, pane_agent)) = line.split_once(':')
-                        && pane_agent == agent_id
-                    {
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Some((pane_id, pane_agent)) = line.split_once(':')
+                    && pane_agent == agent_id
+                {
+                    let _ = Command::new("tmux")
+                        .args(["set-option", "-p", "-t", pane_id, "@agent_command", command])
+                        .status();
+                    if !labels.is_empty() {
+                        let label_str = labels.join(",");
                         let _ = Command::new("tmux")
-                            .args(["set-option", "-p", "-t", pane_id, "@agent_command", command])
+                            .args([
+                                "set-option",
+                                "-p",
+                                "-t",
+                                pane_id,
+                                "@agent_labels",
+                                &label_str,
+                            ])
                             .status();
-                        if !labels.is_empty() {
-                            let label_str = labels.join(",");
-                            let _ = Command::new("tmux")
-                                .args(["set-option", "-p", "-t", pane_id, "@agent_labels", &label_str])
-                                .status();
-                        }
-                        break;
                     }
+                    break;
                 }
             }
         }
@@ -218,10 +242,7 @@ impl TmuxView {
         // Dead pane cleanup is handled by the view event loop (AgentExited),
         // not by the tmux pane-died hook, to avoid races during mass exit.
         // The pane-died hook only respawns the last pane as placeholder.
-        let tail_cmd = format!(
-            "{} attach --readonly '{}'",
-            self.vessel_path, agent_id
-        );
+        let tail_cmd = format!("{} attach --readonly '{}'", self.vessel_path, agent_id);
 
         match self.mode {
             ViewMode::Panes => self.add_pane_split(agent_id, &tail_cmd)?,
@@ -247,9 +268,7 @@ impl TmuxView {
                 .status()?;
 
             if !status.success() {
-                return Err(ViewError::TmuxFailed(
-                    "failed to respawn first pane".into(),
-                ));
+                return Err(ViewError::TmuxFailed("failed to respawn first pane".into()));
             }
 
             // Rename the pane (set pane title)
@@ -396,7 +415,7 @@ impl TmuxView {
 
         match self.mode {
             ViewMode::Panes => self.remove_pane_split(agent_id)?,
-            ViewMode::Windows => self.remove_window(agent_id)?,
+            ViewMode::Windows => self.remove_window(agent_id),
         }
 
         self.active_panes.remove(agent_id);
@@ -409,7 +428,7 @@ impl TmuxView {
         // Use @agent_id pane option which is immune to title overwrites by TUI programs
         #[allow(clippy::literal_string_with_formatting_args)]
         let format_str = "#{pane_id}:#{@agent_id}";
-        
+
         let output = Command::new("tmux")
             .args([
                 "list-panes",
@@ -444,7 +463,7 @@ impl TmuxView {
     }
 
     /// Remove a window in windows mode.
-    fn remove_window(&self, agent_id: &str) -> Result<(), ViewError> {
+    fn remove_window(&self, agent_id: &str) {
         // In windows mode, window name is the agent ID
         let _ = Command::new("tmux")
             .args([
@@ -453,7 +472,6 @@ impl TmuxView {
                 &format!("{}:{}", self.session_name, agent_id),
             ])
             .status();
-        Ok(())
     }
 
     /// Re-tile all panes in the window.
@@ -500,7 +518,7 @@ impl TmuxView {
     pub fn show_waiting_placeholder(&self) -> Result<(), ViewError> {
         // Create a simple script that displays the waiting message
         // Using a bash loop so it stays alive and can be killed when agents spawn
-        let placeholder_cmd = r#"printf '\033[2J\033[H\033[90m'; printf '
+        let placeholder_cmd = r"printf '\033[2J\033[H\033[90m'; printf '
     ╭─────────────────────────────────────╮
     │                                     │
     │      Waiting for agents...          │
@@ -508,7 +526,7 @@ impl TmuxView {
     │   Run: vessel spawn -- <command>     │
     │                                     │
     ╰─────────────────────────────────────╯
-'; sleep 3600"#;  // 1-hour timeout to avoid running forever if abandoned
+'; sleep 3600"; // 1-hour timeout to avoid running forever if abandoned
 
         match self.mode {
             ViewMode::Panes => {
@@ -532,30 +550,32 @@ impl TmuxView {
                 // Clear agent metadata so stale info doesn't show in border
                 let session_window = format!("{}:agents", self.session_name);
                 let _ = Command::new("tmux")
+                    .args(["set-option", "-p", "-t", &session_window, "@agent_id", ""])
+                    .status();
+                let _ = Command::new("tmux")
                     .args([
-                        "set-option", "-p", "-t", &session_window,
-                        "@agent_id", "",
+                        "set-option",
+                        "-p",
+                        "-t",
+                        &session_window,
+                        "@agent_command",
+                        "",
                     ])
                     .status();
                 let _ = Command::new("tmux")
                     .args([
-                        "set-option", "-p", "-t", &session_window,
-                        "@agent_command", "",
-                    ])
-                    .status();
-                let _ = Command::new("tmux")
-                    .args([
-                        "set-option", "-p", "-t", &session_window,
-                        "@agent_labels", "",
+                        "set-option",
+                        "-p",
+                        "-t",
+                        &session_window,
+                        "@agent_labels",
+                        "",
                     ])
                     .status();
 
                 // Set pane title
                 let _ = Command::new("tmux")
-                    .args([
-                        "select-pane", "-t", &session_window,
-                        "-T", "waiting",
-                    ])
+                    .args(["select-pane", "-t", &session_window, "-T", "waiting"])
                     .status();
             }
             ViewMode::Windows => {
@@ -580,32 +600,32 @@ impl TmuxView {
 
                 // Clear agent metadata so stale info doesn't show in border
                 let _ = Command::new("tmux")
+                    .args(["set-option", "-p", "-t", &session_window, "@agent_id", ""])
+                    .status();
+                let _ = Command::new("tmux")
                     .args([
-                        "set-option", "-p", "-t", &session_window,
-                        "@agent_id", "",
+                        "set-option",
+                        "-p",
+                        "-t",
+                        &session_window,
+                        "@agent_command",
+                        "",
                     ])
                     .status();
                 let _ = Command::new("tmux")
                     .args([
-                        "set-option", "-p", "-t", &session_window,
-                        "@agent_command", "",
-                    ])
-                    .status();
-                let _ = Command::new("tmux")
-                    .args([
-                        "set-option", "-p", "-t", &session_window,
-                        "@agent_labels", "",
+                        "set-option",
+                        "-p",
+                        "-t",
+                        &session_window,
+                        "@agent_labels",
+                        "",
                     ])
                     .status();
 
                 // Rename window
                 let _ = Command::new("tmux")
-                    .args([
-                        "rename-window",
-                        "-t",
-                        &session_window,
-                        "waiting",
-                    ])
+                    .args(["rename-window", "-t", &session_window, "waiting"])
                     .status();
             }
         }
@@ -637,7 +657,7 @@ impl TmuxView {
     }
 
     /// Discover panes that already exist in the tmux session.
-    /// Reads @agent_id from each pane and populates active_panes.
+    /// Reads @`agent_id` from each pane and populates `active_panes`.
     /// Returns the set of agent IDs found.
     pub fn discover_existing_panes(&mut self) -> Result<HashSet<String>, ViewError> {
         #[allow(clippy::literal_string_with_formatting_args)]
@@ -647,16 +667,20 @@ impl TmuxView {
             ViewMode::Panes => Command::new("tmux")
                 .args([
                     "list-panes",
-                    "-t", &format!("{}:agents", self.session_name),
-                    "-F", format_str,
+                    "-t",
+                    &format!("{}:agents", self.session_name),
+                    "-F",
+                    format_str,
                 ])
                 .output()?,
             ViewMode::Windows => Command::new("tmux")
                 .args([
                     "list-panes",
                     "-s",
-                    "-t", &self.session_name,
-                    "-F", format_str,
+                    "-t",
+                    &self.session_name,
+                    "-F",
+                    format_str,
                 ])
                 .output()?,
         };
@@ -677,7 +701,7 @@ impl TmuxView {
     }
 
     /// Find panes with dead processes that need respawning.
-    /// Returns a list of (pane_id, agent_id) pairs where the pane process has exited.
+    /// Returns a list of (`pane_id`, `agent_id`) pairs where the pane process has exited.
     /// Uses tmux's `pane_dead` format variable to detect dead panes.
     pub fn find_dead_panes(&self) -> Result<Vec<(String, String)>, ViewError> {
         #[allow(clippy::literal_string_with_formatting_args)]
@@ -689,7 +713,14 @@ impl TmuxView {
                 .args(["list-panes", "-t", &session_window, "-F", format_str])
                 .output()?,
             ViewMode::Windows => Command::new("tmux")
-                .args(["list-panes", "-s", "-t", &self.session_name, "-F", format_str])
+                .args([
+                    "list-panes",
+                    "-s",
+                    "-t",
+                    &self.session_name,
+                    "-F",
+                    format_str,
+                ])
                 .output()?,
         };
 
@@ -714,28 +745,27 @@ impl TmuxView {
 
     /// Respawn a dead pane with a fresh attach command.
     pub fn respawn_pane(&self, pane_id: &str, agent_id: &str) -> Result<(), ViewError> {
-        let attach_cmd = format!(
-            "{} attach --readonly '{}'",
-            self.vessel_path, agent_id
-        );
+        let attach_cmd = format!("{} attach --readonly '{}'", self.vessel_path, agent_id);
 
         let status = Command::new("tmux")
             .args(["respawn-pane", "-k", "-t", pane_id, &attach_cmd])
             .status()?;
 
         if !status.success() {
-            return Err(ViewError::TmuxFailed(
-                format!("failed to respawn pane {} for agent {}", pane_id, agent_id),
-            ));
+            return Err(ViewError::TmuxFailed(format!(
+                "failed to respawn pane {pane_id} for agent {agent_id}"
+            )));
         }
 
         Ok(())
     }
 
     /// Get the sizes of all panes/windows, keyed by agent ID.
-    /// Uses @agent_id pane option which is immune to programs overwriting titles.
-    /// Returns a map of agent_id -> (rows, cols).
-    pub fn get_pane_sizes(&self) -> Result<std::collections::HashMap<String, (u16, u16)>, ViewError> {
+    /// Uses @`agent_id` pane option which is immune to programs overwriting titles.
+    /// Returns a map of `agent_id` -> (rows, cols).
+    pub fn get_pane_sizes(
+        &self,
+    ) -> Result<std::collections::HashMap<String, (u16, u16)>, ViewError> {
         let mut sizes = std::collections::HashMap::new();
 
         // Use @agent_id pane option - immune to title overwrites by programs
@@ -748,7 +778,14 @@ impl TmuxView {
                 .args(["list-panes", "-t", &session_window, "-F", format_str])
                 .output()?,
             ViewMode::Windows => Command::new("tmux")
-                .args(["list-panes", "-s", "-t", &self.session_name, "-F", format_str])
+                .args([
+                    "list-panes",
+                    "-s",
+                    "-t",
+                    &self.session_name,
+                    "-F",
+                    format_str,
+                ])
                 .output()?,
         };
 
@@ -762,10 +799,10 @@ impl TmuxView {
                     if agent_id.is_empty() {
                         continue;
                     }
-                    if let (Ok(rows), Ok(cols)) = (parts[1].parse::<u16>(), parts[2].parse::<u16>()) {
-                        if self.active_panes.contains(agent_id) {
-                            sizes.insert(agent_id.to_string(), (rows, cols));
-                        }
+                    if let (Ok(rows), Ok(cols)) = (parts[1].parse::<u16>(), parts[2].parse::<u16>())
+                        && self.active_panes.contains(agent_id)
+                    {
+                        sizes.insert(agent_id.to_string(), (rows, cols));
                     }
                 }
             }
@@ -779,20 +816,17 @@ impl TmuxView {
     pub fn setup_resize_hook(&self) -> Result<(), ViewError> {
         // Create a resize command that will be called on pane resize
         // This iterates through panes and calls vessel resize for each
-        let resize_cmd = format!(
-            r#"run-shell '{} resize-all-panes'"#,
-            self.vessel_path
-        );
+        let resize_cmd = format!(r"run-shell '{} resize-all-panes'", self.vessel_path);
 
         // Note: tmux hooks are tricky. For now, we'll use a simpler approach
         // and just resize on attach and when panes are added.
         // A proper hook would be:
         // tmux set-hook -t vessel after-resize-pane "run-shell '...'"
-        
+
         // For now, this is a no-op placeholder. The resize-all-panes command
         // doesn't exist yet, and implementing proper hooks requires more work.
         let _ = resize_cmd;
-        
+
         Ok(())
     }
 

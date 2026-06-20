@@ -3,7 +3,7 @@
 //! Provides consistent output formatting across all vessel commands,
 //! with auto-detection of terminal capabilities.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::IsTerminal;
 
 /// Output format for command results.
@@ -18,7 +18,7 @@ pub enum OutputFormat {
 }
 
 impl OutputFormat {
-    /// Parse a format string into an OutputFormat.
+    /// Parse a format string into an `OutputFormat`.
     ///
     /// Returns None for unknown format strings.
     #[must_use]
@@ -68,6 +68,10 @@ pub fn resolve_format(flag: Option<&str>) -> OutputFormat {
 /// Wrap data in a standard JSON envelope with advice.
 ///
 /// Returns: { "<key>": <data>, "advice": [<advice strings>] }
+// Takes `data`/`advice` by value: this is an ownership-transferring constructor
+// (the values are folded into the returned JSON), and all call sites pass freshly
+// constructed temporaries, so by-value is the natural, behavior-preserving API.
+#[allow(clippy::needless_pass_by_value)]
 #[must_use]
 pub fn json_envelope(key: &str, data: Value, advice: Vec<String>) -> Value {
     json!({

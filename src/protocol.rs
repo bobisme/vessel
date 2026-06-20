@@ -11,12 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct RecordedCommand {
     /// Unix timestamp in milliseconds when the command was recorded.
     pub timestamp: u64,
-    /// The type of command ("send", "send_bytes", or "send_keys").
+    /// The type of command ("send", "`send_bytes`", or "`send_keys`").
     pub command: String,
     /// The payload of the command.
     /// For "send": the text that was sent.
-    /// For "send_bytes": hex-encoded bytes.
-    /// For "send_keys": the key name.
+    /// For "`send_bytes"`: hex-encoded bytes.
+    /// For "`send_keys"`: the key name.
     pub payload: String,
 }
 
@@ -24,6 +24,9 @@ impl RecordedCommand {
     /// Create a new recorded command with the current timestamp.
     #[must_use]
     pub fn new(command: impl Into<String>, payload: impl Into<String>) -> Self {
+        // Milliseconds since the Unix epoch fit in u64 until well past the year
+        // AD 580 million, so this cast cannot truncate in practice.
+        #[allow(clippy::cast_possible_truncation)]
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -102,7 +105,7 @@ pub enum Request {
 
     /// Kill an agent by ID, by labels, by process name, or all agents.
     Kill {
-        /// Agent ID (optional if using labels, proc_filter, or all).
+        /// Agent ID (optional if using labels, `proc_filter`, or all).
         #[serde(default)]
         id: Option<String>,
         /// Kill all agents with these labels.
@@ -638,13 +641,11 @@ mod tests {
             }),
             Response::Recording {
                 agent_id: "test-agent".into(),
-                commands: vec![
-                    RecordedCommand {
-                        timestamp: 1706140800000,
-                        command: "send".into(),
-                        payload: "hello\n".into(),
-                    },
-                ],
+                commands: vec![RecordedCommand {
+                    timestamp: 1706140800000,
+                    command: "send".into(),
+                    payload: "hello\n".into(),
+                }],
             },
             Response::AgentEnv {
                 id: "test-agent".into(),

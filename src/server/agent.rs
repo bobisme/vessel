@@ -14,6 +14,10 @@ pub enum AgentState {
 }
 
 /// An agent running in a PTY.
+// The bool fields track independent runtime state flags (attached, sigterm_sent,
+// no_resize, recording); collapsing them into an enum would not model the
+// orthogonal states correctly.
+#[allow(clippy::struct_excessive_bools)]
 pub struct Agent {
     /// Unique agent ID (e.g., "rusty-nail").
     pub id: String,
@@ -43,7 +47,7 @@ pub struct Agent {
     pub sigterm_sent: bool,
     /// When SIGTERM was sent (for tracking grace period).
     pub sigterm_sent_at: Option<Instant>,
-    /// Last time the screen was cleared (for resize with clear_transcript).
+    /// Last time the screen was cleared (for resize with `clear_transcript`).
     /// Used to avoid sending stale initial renders in attach.
     pub screen_cleared_at: Option<Instant>,
     /// Whether this agent is immune to auto-resize from view.
@@ -56,6 +60,9 @@ pub struct Agent {
 
 impl Agent {
     /// Create a new agent.
+    // Constructor mirrors the agent's distinct configuration inputs; grouping
+    // them into a params struct would only add indirection here.
+    #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
         id: String,
@@ -97,7 +104,8 @@ impl Agent {
     /// Record a command if recording is enabled.
     pub fn record_command(&mut self, command: impl Into<String>, payload: impl Into<String>) {
         if self.recording {
-            self.recorded_commands.push(RecordedCommand::new(command, payload));
+            self.recorded_commands
+                .push(RecordedCommand::new(command, payload));
         }
     }
 
@@ -105,12 +113,12 @@ impl Agent {
     /// Uses millisecond precision to avoid early triggering.
     #[must_use]
     pub fn is_timed_out(&self) -> bool {
-        if let Some(limits) = self.limits {
-            if let Some(timeout_secs) = limits.timeout {
-                // Convert to millis for precision - timeout fires when elapsed >= timeout
-                let timeout_millis = timeout_secs * 1000;
-                return self.started_at.elapsed().as_millis() as u64 >= timeout_millis;
-            }
+        if let Some(limits) = self.limits
+            && let Some(timeout_secs) = limits.timeout
+        {
+            // Convert to millis for precision - timeout fires when elapsed >= timeout
+            let timeout_millis = timeout_secs * 1000;
+            return self.started_at.elapsed().as_millis() as u64 >= timeout_millis;
         }
         false
     }

@@ -8,6 +8,7 @@
 use std::os::fd::{BorrowedFd, RawFd};
 
 /// Get the current user's UID.
+#[must_use]
 pub fn getuid() -> u32 {
     unsafe { libc::getuid() }
 }
@@ -23,8 +24,13 @@ pub fn kill(pid: i32, sig: i32) -> std::io::Result<()> {
 }
 
 /// Get the system page size.
+#[must_use]
 pub fn page_size() -> u64 {
-    unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 }
+    // `sysconf(_SC_PAGESIZE)` always returns a positive page size on any system
+    // we run on, so the sign is never lost.
+    #[allow(clippy::cast_sign_loss)]
+    let size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as u64 };
+    size
 }
 
 /// Borrow a raw file descriptor.
@@ -34,7 +40,8 @@ pub fn page_size() -> u64 {
 /// The caller must ensure `fd` is a valid, open file descriptor for the
 /// lifetime of the returned `BorrowedFd`.  This wrapper exists so that
 /// call-sites outside this module don't need `unsafe` blocks.
-pub fn borrow_fd(fd: RawFd) -> BorrowedFd<'static> {
+#[must_use]
+pub const fn borrow_fd(fd: RawFd) -> BorrowedFd<'static> {
     // SAFETY: Callers are responsible for ensuring fd validity.
     // The 'static lifetime is technically a lie — callers must ensure
     // the fd outlives any use of the BorrowedFd.
@@ -42,6 +49,7 @@ pub fn borrow_fd(fd: RawFd) -> BorrowedFd<'static> {
 }
 
 /// Query the terminal size (rows, cols) of stdout.
+#[must_use]
 pub fn terminal_size() -> Option<(u16, u16)> {
     use libc::{TIOCGWINSZ, winsize};
     use std::os::unix::io::AsRawFd;

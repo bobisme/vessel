@@ -2,12 +2,11 @@
 //!
 //! Handles interactive terminal bridging between user TTY and agent PTY.
 
-
 use crate::protocol::{AttachEndReason, Request, Response};
-use std::os::fd::{AsFd, OwnedFd};
-use thiserror::Error;
 use crate::runtime::io::{AsyncReadExt, AsyncWriteExt};
 use crate::runtime::net::UnixStream;
+use std::os::fd::{AsFd, OwnedFd};
+use thiserror::Error;
 use tracing::{debug, info, warn};
 
 /// Errors during attach mode.
@@ -58,7 +57,8 @@ pub struct AttachConfig {
 
 impl AttachConfig {
     /// Create a new config with the given agent ID.
-    pub fn new(agent_id: String) -> Self {
+    #[must_use]
+    pub const fn new(agent_id: String) -> Self {
         Self {
             agent_id,
             detach_prefix: 0x07, // Ctrl+G
@@ -77,7 +77,7 @@ struct TerminalState {
 impl TerminalState {
     /// Save current terminal state and switch to raw mode.
     fn enter_raw_mode() -> Result<Self, AttachError> {
-        use nix::sys::termios::{self, LocalFlags, InputFlags, OutputFlags, SetArg};
+        use nix::sys::termios::{self, InputFlags, LocalFlags, OutputFlags, SetArg};
 
         // Get stdin as a borrowed fd
         let stdin = std::io::stdin();
@@ -89,7 +89,8 @@ impl TerminalState {
         }
 
         // Get current terminal attributes
-        let original_termios = termios::tcgetattr(stdin_borrowed).map_err(AttachError::GetTermios)?;
+        let original_termios =
+            termios::tcgetattr(stdin_borrowed).map_err(AttachError::GetTermios)?;
 
         // Create raw mode settings
         let mut raw = original_termios.clone();
@@ -123,7 +124,8 @@ impl TerminalState {
             .map_err(AttachError::SetTermios)?;
 
         // Duplicate the fd so we can hold onto it for restoration
-        let stdin_fd = stdin_borrowed.try_clone_to_owned()
+        let stdin_fd = stdin_borrowed
+            .try_clone_to_owned()
             .map_err(AttachError::Io)?;
 
         Ok(Self {
@@ -159,18 +161,29 @@ impl Drop for TerminalState {
 /// - Failed to set terminal to raw mode
 /// - Connection lost during attach
 /// - Protocol error with server
-#[allow(clippy::missing_panics_doc)] // serde_json::to_string on valid types won't panic
+#[allow(clippy::missing_panics_doc)]
+// serde_json::to_string on valid types won't panic
+// Sequential terminal setup/teardown and I/O bridging that reads linearly;
+// splitting it would obscure the ordered raw-mode lifecycle.
+#[allow(clippy::too_many_lines)]
 pub async fn run_attach(
     stream: &mut UnixStream,
     agent_id: &str,
     config: AttachConfig,
 ) -> Result<AttachEndReason, AttachError> {
+    use crate::runtime::time::timeout;
+    use std::time::Duration;
+
+    // Limit buffer size to prevent memory exhaustion (16MB should be enough for any screen)
+    const MAX_INITIAL_SCREEN_SIZE: usize = 16 * 1024 * 1024;
+
     // Send attach request
     let request = Request::Attach {
         id: agent_id.to_string(),
         readonly: config.readonly,
     };
-    let mut json = serde_json::to_string(&request).expect("Request serialization should never fail");
+    let mut json =
+        serde_json::to_string(&request).expect("Request serialization should never fail");
     json.push('\n');
     stream
         .write_all(json.as_bytes())
@@ -192,9 +205,11 @@ pub async fn run_attach(
     }
 
     // Find the newline that terminates the JSON response
-    let newline_pos = response_buf.iter().position(|&b| b == b'\n')
+    let newline_pos = response_buf
+        .iter()
+        .position(|&b| b == b'\n')
         .ok_or_else(|| AttachError::Protocol("no newline in response".to_string()))?;
-    
+
     // Parse just the JSON part (up to and including newline)
     let response: Response = serde_json::from_slice(&response_buf[..newline_pos])
         .map_err(|e| AttachError::Protocol(format!("invalid response: {e}")))?;
@@ -238,33 +253,32 @@ pub async fn run_attach(
     // Read any additional initial screen data that may arrive
     // The server sends the screen render after the JSON response
     // Keep reading until we get no more data (with short timeouts)
-    // Limit buffer size to prevent memory exhaustion (16MB should be enough for any screen)
-    const MAX_INITIAL_SCREEN_SIZE: usize = 16 * 1024 * 1024;
     {
-        use std::time::Duration;
-        use crate::runtime::time::timeout;
-        
         let mut extra_buf = vec![0u8; 65536]; // Large buffer for screen data
-        
+
         // Read in a loop until no more data arrives
         // Use short timeouts to detect end of initial data
         loop {
             // Check size limit before reading more
             if initial_screen_data.len() >= MAX_INITIAL_SCREEN_SIZE {
-                warn!("Initial screen data exceeded {} bytes, truncating", MAX_INITIAL_SCREEN_SIZE);
+                warn!(
+                    "Initial screen data exceeded {} bytes, truncating",
+                    MAX_INITIAL_SCREEN_SIZE
+                );
                 break;
             }
-            
+
             match timeout(Duration::from_millis(100), stream.read(&mut extra_buf)).await {
                 Ok(Ok(n)) if n > 0 => {
                     initial_screen_data.extend_from_slice(&extra_buf[..n]);
                     // If we got a full buffer, there might be more
                     if n < extra_buf.len() {
                         // Partial read - probably done, but try once more
-                        if let Ok(Ok(n2)) = timeout(Duration::from_millis(20), stream.read(&mut extra_buf)).await {
-                            if n2 > 0 {
-                                initial_screen_data.extend_from_slice(&extra_buf[..n2]);
-                            }
+                        if let Ok(Ok(n2)) =
+                            timeout(Duration::from_millis(20), stream.read(&mut extra_buf)).await
+                            && n2 > 0
+                        {
+                            initial_screen_data.extend_from_slice(&extra_buf[..n2]);
                         }
                         break;
                     }
@@ -275,13 +289,16 @@ pub async fn run_attach(
     }
 
     // Output any initial screen data
-    if !initial_screen_data.is_empty() {
-        info!("Outputting {} bytes of initial screen data", initial_screen_data.len());
-        use std::io::Write;
-        std::io::stdout().write_all(&initial_screen_data).map_err(AttachError::Io)?;
-        std::io::stdout().flush().map_err(AttachError::Io)?;
-    } else {
+    if initial_screen_data.is_empty() {
         info!("No initial screen data received");
+    } else {
+        info!(
+            "Outputting {} bytes of initial screen data",
+            initial_screen_data.len()
+        );
+        std::io::Write::write_all(&mut std::io::stdout(), &initial_screen_data)
+            .map_err(AttachError::Io)?;
+        std::io::Write::flush(&mut std::io::stdout()).map_err(AttachError::Io)?;
     }
 
     // Run the I/O bridge
@@ -311,7 +328,7 @@ async fn run_io_bridge(
     config: &AttachConfig,
 ) -> Result<AttachEndReason, AttachError> {
     use crate::runtime::io::{stdin, stdout};
-    use crate::runtime::signal::{signal, SignalKind};
+    use crate::runtime::signal::{SignalKind, signal};
 
     let mut stdin = stdin();
     let mut stdout = stdout();
@@ -319,11 +336,10 @@ async fn run_io_bridge(
     let mut detach_state = DetachState::Normal;
     let mut input_buf = [0u8; 1024];
     let mut output_buf = [0u8; 4096];
-    
+
     // Set up SIGWINCH handler for terminal resize
-    let mut sigwinch = signal(SignalKind::window_change())
-        .map_err(AttachError::Io)?;
-    
+    let mut sigwinch = signal(SignalKind::window_change()).map_err(AttachError::Io)?;
+
     // Track current size to detect changes
     let mut current_size = get_terminal_size();
 
@@ -356,7 +372,7 @@ async fn run_io_bridge(
                     }
                 }
             }
-            
+
             // Read from user's stdin
             result = stdin.read(&mut input_buf), if !config.readonly => {
                 let n = result.map_err(AttachError::Io)?;
@@ -450,7 +466,9 @@ async fn send_data(stream: &mut UnixStream, data: &[u8]) -> Result<(), AttachErr
 async fn send_detach(stream: &mut UnixStream) -> Result<(), AttachError> {
     // Send an empty write or a special marker
     // For now, we'll just close our write side, which the server will detect
-    crate::runtime::net::shutdown_write(stream).await.map_err(AttachError::Io)?;
+    crate::runtime::net::shutdown_write(stream)
+        .await
+        .map_err(AttachError::Io)?;
     Ok(())
 }
 

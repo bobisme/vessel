@@ -3,8 +3,8 @@
 //! These tests demonstrate and verify the primary use case: one agent (orchestrator)
 //! spawning and coordinating multiple TUI agents.
 
-use vessel::testing::TestHarness;
 use std::time::Duration;
+use vessel::testing::TestHarness;
 
 /// Scenario: Orchestrator spawns multiple worker agents and coordinates their work.
 ///

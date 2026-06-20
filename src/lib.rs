@@ -31,16 +31,18 @@ pub fn has_systemd_run() -> bool {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .is_ok_and(|s| s.success())
     })
 }
 
-pub use attach::{run_attach, AttachConfig, AttachError};
-pub use cli::{parse_key_notation, parse_key_sequence, Cli, Command};
-pub use client::{default_socket_path, Client, ClientError};
-pub use output::{json_envelope, resolve_format, text_record, OutputFormat};
-pub use protocol::{AgentInfo, AgentState, DumpFormat, Event, ExitReason, RecordedCommand, Request, ResourceLimits, Response};
+pub use attach::{AttachConfig, AttachError, run_attach};
+pub use cli::{Cli, Command, parse_key_notation, parse_key_sequence};
+pub use client::{Client, ClientError, default_socket_path};
+pub use output::{OutputFormat, json_envelope, resolve_format, text_record};
+pub use protocol::{
+    AgentInfo, AgentState, DumpFormat, Event, ExitReason, RecordedCommand, Request, ResourceLimits,
+    Response,
+};
 pub use server::{Server, ServerError};
 pub use testing::{AgentHandle, TestError, TestHarness};
 pub use view::{TmuxView, ViewError, ViewMode};

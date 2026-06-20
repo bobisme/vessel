@@ -34,9 +34,7 @@ pub mod net {
 
 #[cfg(feature = "runtime-tokio")]
 pub mod io {
-    pub use tokio::io::{
-        AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, stdin, stdout,
-    };
+    pub use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, stdin, stdout};
 }
 
 #[cfg(feature = "runtime-tokio")]
@@ -92,6 +90,9 @@ pub mod net {
     /// Shut down the write half of a stream.
     /// Bridges tokio's `AsyncWriteExt::shutdown()` (async, no args) with
     /// asupersync's `UnixStream::shutdown(Shutdown)` (sync, takes arg).
+    // Kept `async` to mirror the tokio-backed variant's signature so call sites
+    // can `.await` it under either runtime feature.
+    #[allow(clippy::unused_async)]
     pub async fn shutdown_write(stream: &mut UnixStream) -> std::io::Result<()> {
         stream.shutdown(std::net::Shutdown::Write)
     }
@@ -104,10 +105,7 @@ pub mod io {
     /// Extension trait that adds `read_line` as a method (tokio-compatible).
     /// In asupersync, `read_line` is a standalone function, not a trait method.
     pub trait AsyncBufReadExt: asupersync::io::AsyncBufRead + Unpin {
-        fn read_line<'a>(
-            &'a mut self,
-            buf: &'a mut String,
-        ) -> asupersync::io::ReadLine<'a, Self> {
+        fn read_line<'a>(&'a mut self, buf: &'a mut String) -> asupersync::io::ReadLine<'a, Self> {
             asupersync::io::read_line(self, buf)
         }
     }
@@ -115,17 +113,15 @@ pub mod io {
     impl<T: asupersync::io::AsyncBufRead + Unpin + ?Sized> AsyncBufReadExt for T {}
 
     /// Async stdin backed by a blocking reader on a background thread.
-    pub fn stdin() -> Stdin {
-        Stdin {
-            _priv: (),
-        }
+    #[must_use]
+    pub const fn stdin() -> Stdin {
+        Stdin { _priv: () }
     }
 
     /// Async stdout backed by a blocking writer on a background thread.
-    pub fn stdout() -> Stdout {
-        Stdout {
-            _priv: (),
-        }
+    #[must_use]
+    pub const fn stdout() -> Stdout {
+        Stdout { _priv: () }
     }
 
     pub struct Stdin {
@@ -133,6 +129,10 @@ pub mod io {
     }
 
     impl Stdin {
+        /// # Panics
+        ///
+        /// Panics if the spawned blocking task panics (it never does here; the
+        /// closure only performs a stdin read).
         pub async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             let mut owned = vec![0u8; buf.len()];
             let n = super::task::spawn_blocking(move || {
@@ -154,6 +154,10 @@ pub mod io {
     }
 
     impl Stdout {
+        /// # Panics
+        ///
+        /// Panics if the spawned blocking task panics (it never does here; the
+        /// closure only performs a stdout write).
         pub async fn write_all(&mut self, data: &[u8]) -> std::io::Result<()> {
             let data = data.to_vec();
             super::task::spawn_blocking(move || {
@@ -164,6 +168,10 @@ pub mod io {
             .expect("spawn_blocking panicked")
         }
 
+        /// # Panics
+        ///
+        /// Panics if the spawned blocking task panics (it never does here; the
+        /// closure only performs a stdout flush).
         pub async fn flush(&mut self) -> std::io::Result<()> {
             super::task::spawn_blocking(|| {
                 use std::io::Write;
@@ -187,30 +195,36 @@ pub mod sync {
             Self(asupersync::sync::Mutex::new(value))
         }
 
+        /// # Panics
+        ///
+        /// Panics if called outside an async context, or if the underlying
+        /// mutex has been poisoned by a panic while held.
         pub async fn lock(&self) -> MutexGuard<'_, T> {
-            let cx = asupersync::Cx::current()
-                .expect("Mutex::lock called outside async context");
-            let guard = self.0.lock(&cx).await
+            let cx = asupersync::Cx::current().expect("Mutex::lock called outside async context");
+            let guard = self
+                .0
+                .lock(&cx)
+                .await
                 .expect("Mutex should not be poisoned");
-            MutexGuard { _guard: guard }
+            MutexGuard { guard }
         }
     }
 
-    /// Wrapper around asupersync's MutexGuard to keep the API opaque.
+    /// Wrapper around asupersync's `MutexGuard` to keep the API opaque.
     pub struct MutexGuard<'a, T> {
-        _guard: asupersync::sync::MutexGuard<'a, T>,
+        guard: asupersync::sync::MutexGuard<'a, T>,
     }
 
     impl<T> Deref for MutexGuard<'_, T> {
         type Target = T;
         fn deref(&self) -> &T {
-            &self._guard
+            &self.guard
         }
     }
 
     impl<T> DerefMut for MutexGuard<'_, T> {
         fn deref_mut(&mut self) -> &mut T {
-            &mut self._guard
+            &mut self.guard
         }
     }
 
@@ -221,18 +235,20 @@ pub mod sync {
         }
 
         /// Create a broadcast channel with the given capacity.
-        pub fn channel<T: Clone + Send + 'static>(
-            capacity: usize,
-        ) -> (Sender<T>, Receiver<T>) {
+        #[must_use]
+        pub fn channel<T: Clone + Send + 'static>(capacity: usize) -> (Sender<T>, Receiver<T>) {
             let (tx, rx) = asupersync::channel::broadcast::channel(capacity);
             (Sender(tx), Receiver(rx))
         }
 
-        /// Broadcast sender that hides Cx requirement on send().
+        /// Broadcast sender that hides Cx requirement on `send()`.
         #[derive(Clone)]
         pub struct Sender<T>(asupersync::channel::broadcast::Sender<T>);
 
         impl<T: Clone + Send + 'static> Sender<T> {
+            /// # Panics
+            ///
+            /// Panics if called outside an async context.
             pub fn send(
                 &self,
                 value: T,
@@ -242,18 +258,20 @@ pub mod sync {
                 self.0.send(&cx, value)
             }
 
+            #[must_use]
             pub fn subscribe(&self) -> Receiver<T> {
                 Receiver(self.0.subscribe())
             }
         }
 
-        /// Broadcast receiver that hides Cx requirement on recv().
+        /// Broadcast receiver that hides Cx requirement on `recv()`.
         pub struct Receiver<T>(asupersync::channel::broadcast::Receiver<T>);
 
         impl<T: Clone + Send + 'static> Receiver<T> {
-            pub async fn recv(
-                &mut self,
-            ) -> Result<T, asupersync::channel::broadcast::RecvError> {
+            /// # Panics
+            ///
+            /// Panics if called outside an async context.
+            pub async fn recv(&mut self) -> Result<T, asupersync::channel::broadcast::RecvError> {
                 let cx = asupersync::Cx::current()
                     .expect("broadcast::recv called outside async context");
                 self.0.recv(&cx).await
@@ -268,6 +286,7 @@ pub mod time {
     pub use std::time::Instant;
 
     /// Sleep for the given duration.
+    #[must_use]
     pub fn sleep(duration: Duration) -> asupersync::time::Sleep {
         asupersync::time::sleep(asupersync::time::wall_now(), duration)
     }
@@ -281,13 +300,14 @@ pub mod time {
     }
 
     /// Create an async interval timer.
+    #[must_use]
     pub fn interval(period: Duration) -> Interval {
         Interval {
             inner: asupersync::time::interval(asupersync::time::wall_now(), period),
         }
     }
 
-    /// Async interval that wraps asupersync's sync tick() with sleep.
+    /// Async interval that wraps asupersync's sync `tick()` with sleep.
     pub struct Interval {
         inner: asupersync::time::Interval,
     }
@@ -315,24 +335,30 @@ pub mod signal {
 
 #[cfg(feature = "runtime-asupersync")]
 pub mod task {
-    use std::sync::{Arc, OnceLock};
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, OnceLock};
 
     static RUNTIME_HANDLE: OnceLock<asupersync::runtime::RuntimeHandle> = OnceLock::new();
 
-    /// Store the runtime handle for later spawn() calls.
-    /// Must be called once during startup (from block_on context).
+    /// Store the runtime handle for later `spawn()` calls.
+    /// Must be called once during startup (from `block_on` context).
     pub fn set_runtime_handle(handle: asupersync::runtime::RuntimeHandle) {
         // In tests, the handle may already be set by a previous test.
         let _ = RUNTIME_HANDLE.set(handle);
     }
 
     fn handle() -> &'static asupersync::runtime::RuntimeHandle {
-        RUNTIME_HANDLE.get().expect("runtime handle not set — call set_runtime_handle first")
+        RUNTIME_HANDLE
+            .get()
+            .expect("runtime handle not set — call set_runtime_handle first")
     }
 
     /// Run an async future on a fresh asupersync runtime.
     /// Used for tests and any context that needs a one-shot runtime.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a fresh asupersync runtime cannot be built.
     pub fn block_on<F: std::future::Future + Send + 'static>(f: F) -> F::Output
     where
         F::Output: Send + 'static,
@@ -357,6 +383,10 @@ pub mod task {
 
     /// Run a blocking closure on a background thread, returning a future
     /// that resolves to the closure's return value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal result/waker mutex is poisoned by a panic.
     pub fn spawn_blocking<F, R>(f: F) -> JoinHandle<R>
     where
         F: FnOnce() -> R + Send + 'static,
@@ -370,9 +400,17 @@ pub mod task {
         let state2 = Arc::clone(&state);
         std::thread::spawn(move || {
             let result = f();
-            *state2.result.lock().unwrap() = Some(result);
+            *state2
+                .result
+                .lock()
+                .expect("blocking result mutex poisoned") = Some(result);
             state2.done.store(true, Ordering::Release);
-            if let Some(waker) = state2.waker.lock().unwrap().take() {
+            let waker = state2
+                .waker
+                .lock()
+                .expect("blocking waker mutex poisoned")
+                .take();
+            if let Some(waker) = waker {
                 waker.wake();
             }
         });
@@ -395,7 +433,7 @@ pub mod task {
 
     impl<T> JoinHandle<T> {
         /// Cancel the task. Best-effort — blocking tasks run to completion.
-        pub fn abort(&self) {
+        pub const fn abort(&self) {
             // asupersync JoinHandle doesn't have abort;
             // blocking tasks can't be cancelled mid-execution.
             // This is a no-op for compatibility.
@@ -411,19 +449,26 @@ pub mod task {
         ) -> std::task::Poll<Self::Output> {
             let inner = &mut self.get_mut().0;
             match inner {
-                JoinHandleInner::Async(handle) => {
-                    std::pin::Pin::new(handle).poll(cx).map(Ok)
-                }
+                JoinHandleInner::Async(handle) => std::pin::Pin::new(handle).poll(cx).map(Ok),
                 JoinHandleInner::Blocking(state) => {
                     if state.done.load(Ordering::Acquire) {
-                        let result = state.result.lock().unwrap().take()
+                        let result = state
+                            .result
+                            .lock()
+                            .expect("blocking result mutex poisoned")
+                            .take()
                             .expect("blocking result already taken");
                         std::task::Poll::Ready(Ok(result))
                     } else {
-                        *state.waker.lock().unwrap() = Some(cx.waker().clone());
+                        *state.waker.lock().expect("blocking waker mutex poisoned") =
+                            Some(cx.waker().clone());
                         // Double-check after setting waker to avoid race
                         if state.done.load(Ordering::Acquire) {
-                            let result = state.result.lock().unwrap().take()
+                            let result = state
+                                .result
+                                .lock()
+                                .expect("blocking result mutex poisoned")
+                                .take()
                                 .expect("blocking result already taken");
                             std::task::Poll::Ready(Ok(result))
                         } else {
@@ -452,8 +497,8 @@ pub mod task {
 ///
 /// Supports 2-5 branches with optional guards:
 ///   select! {
-///       pat = future_expr => { body }
-///       pat = future_expr, if guard => { body }
+///       pat = `future_expr` => { body }
+///       pat = `future_expr`, if guard => { body }
 ///   }
 #[cfg(feature = "runtime-asupersync")]
 macro_rules! select {
@@ -549,7 +594,7 @@ macro_rules! select {
 }
 
 /// Helper: conditionally substitute `pending()` when a guard is false.
-/// Box::pins inner futures so SelectEither gets Unpin inputs.
+/// `Box::pins` inner futures so `SelectEither` gets Unpin inputs.
 #[cfg(feature = "runtime-asupersync")]
 macro_rules! select_arm {
     // With guard — wrap in SelectEither with Box::pin'd inner futures
@@ -585,11 +630,11 @@ pub(crate) mod select_either {
         Right(B),
     }
 
-    pub fn left<A, B>(a: A) -> SelectEither<A, B> {
+    pub const fn left<A, B>(a: A) -> SelectEither<A, B> {
         SelectEither::Left(a)
     }
 
-    pub fn right<A, B>(b: B) -> SelectEither<A, B> {
+    pub const fn right<A, B>(b: B) -> SelectEither<A, B> {
         SelectEither::Right(b)
     }
 
@@ -602,8 +647,8 @@ pub(crate) mod select_either {
 
         fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
             match self.get_mut() {
-                SelectEither::Left(a) => Pin::new(a).poll(cx),
-                SelectEither::Right(b) => Pin::new(b).poll(cx),
+                Self::Left(a) => Pin::new(a).poll(cx),
+                Self::Right(b) => Pin::new(b).poll(cx),
             }
         }
     }

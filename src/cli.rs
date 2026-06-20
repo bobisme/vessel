@@ -74,13 +74,12 @@ pub fn parse_key_sequence(s: &str) -> Option<Vec<u8>> {
         "left" => Some(vec![0x1b, 0x5b, 0x44]),  // ESC [ D
 
         // Special keys
-        "enter" => Some(vec![0x0d]),                            // CR
-        "return" => Some(vec![0x0d]),                           // Alias for enter
-        "tab" => Some(vec![0x09]),                              // HT
-        "escape" | "esc" => Some(vec![0x1b]),                   // ESC
-        "backspace" => Some(vec![0x7f]),                        // DEL
+        "enter" | "return" => Some(vec![0x0d]), // CR ("return" is an alias)
+        "tab" => Some(vec![0x09]),              // HT
+        "escape" | "esc" => Some(vec![0x1b]),   // ESC
+        "backspace" => Some(vec![0x7f]),        // DEL
         "delete" | "del" => Some(vec![0x1b, 0x5b, 0x33, 0x7e]), // ESC [ 3 ~
-        "space" => Some(vec![0x20]),                            // SP (literal space byte)
+        "space" => Some(vec![0x20]),            // SP (literal space byte)
 
         // Navigation keys
         "home" => Some(vec![0x1b, 0x5b, 0x48]), // ESC [ H
@@ -154,7 +153,7 @@ pub enum Command {
 
         /// Inherit env vars from the calling shell (comma-separated names).
         /// Reads each variable from the client's environment and passes it
-        /// to the spawned agent (e.g., --env-inherit BOTBUS_AGENT,EDITOR).
+        /// to the spawned agent (e.g., --env-inherit `BOTBUS_AGENT,EDITOR`).
         #[arg(long, value_delimiter = ',')]
         env_inherit: Vec<String>,
 
@@ -653,7 +652,7 @@ SUBAGENT WORKFLOW:
     ///
     /// Reads /proc/<pid>/environ for a running agent and displays its
     /// actual environment. Useful for verifying that env vars like
-    /// CARGO_BUILD_JOBS are reaching the spawned process.
+    /// `CARGO_BUILD_JOBS` are reaching the spawned process.
     Env {
         /// Agent ID.
         id: String,

@@ -4,12 +4,12 @@
 
 use crate::has_systemd_run;
 use crate::protocol::{Request, Response};
+use crate::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use crate::runtime::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
-use crate::runtime::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use crate::runtime::net::UnixStream;
 use tracing::{debug, info, warn};
 
 /// Errors that can occur in the client.
@@ -68,7 +68,7 @@ pub struct Client {
 
 impl Client {
     /// Create a new client that will connect to the given socket path.
-    #[must_use] 
+    #[must_use]
     pub const fn new(socket_path: PathBuf) -> Self {
         Self {
             socket_path,
@@ -77,7 +77,7 @@ impl Client {
     }
 
     /// Create a client with the default socket path.
-    #[must_use] 
+    #[must_use]
     pub fn with_default_path() -> Self {
         Self::new(default_socket_path())
     }
@@ -138,7 +138,13 @@ impl Client {
         if has_systemd_run() {
             info!("Launching server via systemd-run --scope");
             let result = Command::new("systemd-run")
-                .args(["--user", "--scope", "--collect", "--unit=vessel-server", "--"])
+                .args([
+                    "--user",
+                    "--scope",
+                    "--collect",
+                    "--unit=vessel-server",
+                    "--",
+                ])
                 .arg(&exe)
                 .args(["server", "--daemon"])
                 .spawn();
@@ -189,8 +195,7 @@ impl Client {
             return Err(ClientError::ConnectionLost);
         }
 
-        let response: Response =
-            serde_json::from_str(&line).map_err(ClientError::Deserialize)?;
+        let response: Response = serde_json::from_str(&line).map_err(ClientError::Deserialize)?;
 
         // Check for server error
         if let Response::Error { message } = &response {
