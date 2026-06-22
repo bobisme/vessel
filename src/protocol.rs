@@ -486,8 +486,19 @@ const fn default_true() -> bool {
     true
 }
 
+/// Maximum length, in bytes, of a base64-encoded `SendBytes` payload accepted
+/// during deserialization.
+///
+/// This bounds the decoded `Vec<u8>` allocation independently of the server's
+/// IPC frame cap (defense in depth against CWE-400): even if the protocol
+/// types are deserialized outside the framed socket reader, an oversized
+/// payload is rejected before the decode buffer is allocated. 1 MiB of base64
+/// decodes to ~768 KiB, far above any legitimate single PTY write.
+const MAX_SEND_BYTES_BASE64_LEN: usize = 1024 * 1024;
+
 /// Module for base64 encoding/decoding of byte vectors in serde.
 mod base64_bytes {
+    use super::MAX_SEND_BYTES_BASE64_LEN;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
@@ -505,6 +516,13 @@ mod base64_bytes {
     {
         use base64::Engine;
         let s = String::deserialize(deserializer)?;
+        // Reject oversized payloads before allocating the decoded buffer.
+        if s.len() > MAX_SEND_BYTES_BASE64_LEN {
+            return Err(serde::de::Error::custom(format!(
+                "send_bytes payload too large: {} encoded bytes exceeds limit of {MAX_SEND_BYTES_BASE64_LEN}",
+                s.len()
+            )));
+        }
         base64::engine::general_purpose::STANDARD
             .decode(&s)
             .map_err(serde::de::Error::custom)
@@ -584,6 +602,37 @@ mod tests {
             let parsed: Request = serde_json::from_str(&json).expect("deserialize");
             let json2 = serde_json::to_string(&parsed).expect("re-serialize");
             assert_eq!(json, json2, "roundtrip failed for {:?}", req);
+        }
+    }
+
+    #[test]
+    fn test_send_bytes_oversized_payload_rejected() {
+        // A `SendBytes.data` base64 field longer than the cap must fail to
+        // deserialize, before the decoded `Vec<u8>` is allocated (CWE-400).
+        let oversized = "A".repeat(MAX_SEND_BYTES_BASE64_LEN + 4);
+        let json = format!(r#"{{"type":"send_bytes","id":"a","data":"{oversized}"}}"#);
+        let err = serde_json::from_str::<Request>(&json)
+            .expect_err("oversized send_bytes payload should be rejected");
+        assert!(
+            err.to_string().contains("send_bytes payload too large"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn test_send_bytes_at_limit_accepted() {
+        // A payload at exactly the cap is still accepted and decodes correctly.
+        // Base64 length must be a multiple of 4; the cap (1 MiB) already is.
+        let at_limit = "A".repeat(MAX_SEND_BYTES_BASE64_LEN);
+        let json = format!(r#"{{"type":"send_bytes","id":"a","data":"{at_limit}"}}"#);
+        let parsed: Request =
+            serde_json::from_str(&json).expect("payload at the limit should be accepted");
+        match parsed {
+            Request::SendBytes { data, .. } => {
+                // "AAAA..." decodes to all-zero bytes; 3 bytes per 4 base64 chars.
+                assert_eq!(data.len(), MAX_SEND_BYTES_BASE64_LEN / 4 * 3);
+            }
+            other => panic!("expected SendBytes, got {other:?}"),
         }
     }
 

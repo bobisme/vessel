@@ -30,7 +30,7 @@ use crate::protocol::{
     TranscriptEntry,
 };
 use crate::pty;
-use crate::runtime::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use crate::runtime::io::{AsyncReadExt, AsyncWriteExt};
 use crate::runtime::net::{OwnedReadHalf, OwnedWriteHalf, UnixStream};
 use crate::runtime::sync::{Mutex, broadcast};
 use nix::sys::signal::Signal;
@@ -299,6 +299,93 @@ impl Server {
     }
 }
 
+/// Maximum size, in bytes, of a single newline-delimited IPC request frame.
+///
+/// The control socket is owner-only, but a less-trusted same-user process or a
+/// spawned agent can still connect and stream bytes. Capping the frame size
+/// bounds server memory so such a client cannot exhaust it by sending an
+/// endless line or an oversized `SendBytes` payload (CWE-400). 1 MiB matches
+/// the default transcript cap and is ~1000x the 1 KiB chunks `attach` forwards,
+/// so legitimate requests are unaffected.
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+
+/// Error from [`FrameReader::next_frame`].
+enum FrameError {
+    Io(std::io::Error),
+    /// A frame exceeded [`MAX_FRAME_BYTES`] without a terminating newline.
+    TooLarge,
+}
+
+/// Reads newline-delimited request frames from a client with a hard per-frame
+/// size cap.
+///
+/// Unlike `read_line`, this never accumulates an unbounded buffer: once the
+/// in-progress frame grows past [`MAX_FRAME_BYTES`] without a newline, the
+/// caller is told to reject the request and close the connection, so untrusted
+/// socket input is bounded before it is parsed.
+struct FrameReader {
+    reader: OwnedReadHalf,
+    /// Bytes read from the socket but not yet returned as a complete frame.
+    buf: Vec<u8>,
+}
+
+impl FrameReader {
+    const fn new(reader: OwnedReadHalf) -> Self {
+        Self {
+            reader,
+            buf: Vec::new(),
+        }
+    }
+
+    /// Returns the next frame (newline stripped), `Ok(None)` at EOF, or
+    /// [`FrameError::TooLarge`] if a frame exceeds the size cap.
+    async fn next_frame(&mut self) -> Result<Option<Vec<u8>>, FrameError> {
+        /// Bytes read from the socket per iteration. Kept on the heap (inside
+        /// `buf`) rather than on the async stack to keep the future small.
+        const CHUNK: usize = 16 * 1024;
+        loop {
+            if let Some(pos) = self.buf.iter().position(|&b| b == b'\n') {
+                let mut frame: Vec<u8> = self.buf.drain(..=pos).collect();
+                frame.pop(); // strip the trailing '\n'
+                return Ok(Some(frame));
+            }
+
+            // No complete frame yet. Reject before reading further if the
+            // partial frame is already over the cap.
+            if self.buf.len() > MAX_FRAME_BYTES {
+                return Err(FrameError::TooLarge);
+            }
+
+            // Read straight into the heap buffer: reserve a chunk, fill it, and
+            // truncate to what was actually read. Avoids a large stack array.
+            let start = self.buf.len();
+            self.buf.resize(start + CHUNK, 0);
+            let n = self
+                .reader
+                .read(&mut self.buf[start..])
+                .await
+                .map_err(FrameError::Io)?;
+            self.buf.truncate(start + n);
+            if n == 0 {
+                // EOF: surface any trailing newline-less bytes as a final frame.
+                return if self.buf.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(std::mem::take(&mut self.buf)))
+                };
+            }
+        }
+    }
+
+    /// Consume the reader, returning the underlying read half for the attach
+    /// streaming handoff. Any buffered-but-unconsumed bytes are discarded,
+    /// matching the previous `BufReader::into_inner` behaviour (the attach
+    /// handshake does not pipeline input ahead of the `Attach` frame).
+    fn into_inner(self) -> OwnedReadHalf {
+        self.reader
+    }
+}
+
 /// Handle a single client connection.
 #[instrument(skip_all)]
 async fn handle_connection(
@@ -308,21 +395,34 @@ async fn handle_connection(
     event_tx: broadcast::Sender<Event>,
 ) -> Result<(), ServerError> {
     let (reader, writer) = stream.into_split();
-    let mut reader = BufReader::new(reader);
+    let mut reader = FrameReader::new(reader);
     let mut writer = writer;
-    let mut line = String::new();
 
     loop {
-        line.clear();
-        let n = reader.read_line(&mut line).await.map_err(ServerError::Io)?;
+        let frame = match reader.next_frame().await {
+            Ok(Some(frame)) => frame,
+            Ok(None) => {
+                // EOF - client disconnected
+                debug!("Client disconnected");
+                break;
+            }
+            Err(FrameError::Io(e)) => return Err(ServerError::Io(e)),
+            Err(FrameError::TooLarge) => {
+                // Bounded reject: tell the client and drop the connection
+                // rather than retain an oversized buffer.
+                let response = Response::error(format!(
+                    "request frame exceeds maximum size of {MAX_FRAME_BYTES} bytes"
+                ));
+                let mut json = serde_json::to_string(&response)
+                    .expect("Response serialization should never fail");
+                json.push('\n');
+                writer.write_all(json.as_bytes()).await.ok();
+                debug!("Closing connection: request frame exceeded size limit");
+                break;
+            }
+        };
 
-        if n == 0 {
-            // EOF - client disconnected
-            debug!("Client disconnected");
-            break;
-        }
-
-        let request: Request = match serde_json::from_str(&line) {
+        let request: Request = match serde_json::from_slice(&frame) {
             Ok(req) => req,
             Err(e) => {
                 let response = Response::error(format!("invalid request: {e}"));

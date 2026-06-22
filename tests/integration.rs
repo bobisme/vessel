@@ -991,3 +991,53 @@ vessel::async_test! {
         let _ = client.request(Request::Shutdown).await;
     }
 }
+
+// A client that streams a frame larger than the IPC cap (with no newline, so it
+// is never a valid request) must be rejected without dispatching a request, and
+// the server must keep serving other clients (CWE-400).
+vessel::async_test! {
+    async fn test_oversized_frame_rejected_without_dispatch() {
+        use vessel::runtime::io::{AsyncReadExt, AsyncWriteExt};
+        use vessel::runtime::net::UnixStream;
+
+        let socket_path = unique_socket_path();
+        let _cleanup = SocketCleanup(socket_path.clone());
+
+        let server_socket = socket_path.clone();
+        runtime::task::spawn(async move {
+            let mut server = Server::new(server_socket);
+            let _ = server.run().await;
+        });
+        runtime::time::sleep(Duration::from_millis(100)).await;
+
+        // Stream 2 MiB with no newline: exceeds the 1 MiB frame cap.
+        let mut stream = UnixStream::connect(&socket_path).await.expect("connect");
+        let blob = vec![b'x'; 2 * 1024 * 1024];
+        // The write may fail with a broken pipe once the server closes the
+        // connection after tripping the cap; that is the expected outcome.
+        let _ = stream.write_all(&blob).await;
+
+        // Drain whatever the server sent before closing. If it replied at all,
+        // it must be the size-limit error, never a dispatched result.
+        let mut resp = Vec::new();
+        let _ = stream.read_to_end(&mut resp).await;
+        if !resp.is_empty() {
+            let text = String::from_utf8_lossy(&resp);
+            assert!(
+                text.contains("exceeds maximum size"),
+                "unexpected response to oversized frame: {text}"
+            );
+        }
+        drop(stream);
+
+        // The server survived the flood (no OOM/crash) and still serves clients.
+        let mut client = Client::new(socket_path);
+        let response = client
+            .request(Request::Ping)
+            .await
+            .expect("server should still respond after rejecting oversized frame");
+        assert!(matches!(response, Response::Pong));
+
+        let _ = client.request(Request::Shutdown).await;
+    }
+}
