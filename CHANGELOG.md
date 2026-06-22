@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.5] - 2026-06-22
+
+### Security
+- Bound IPC request frames and `SendBytes` payloads to prevent server memory
+  exhaustion (CWE-400). The server previously accumulated an unbounded line via
+  `read_line` before parsing, and decoded `SendBytes.data` base64 into an
+  unbounded `Vec<u8>`, so a same-user or spawned-agent client on the owner-only
+  control socket could exhaust memory and deny the shared control plane. The
+  server now caps each newline-delimited frame at 1 MiB (rejecting and closing
+  the connection before parse/dispatch) and independently rejects oversized
+  `SendBytes` payloads before allocating the decode buffer.
+
 ## [0.17.4] - 2026-06-19
 
 ### Fixed
